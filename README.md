@@ -215,6 +215,9 @@ first failure. `fmt` only checks formatting, and clippy runs with
 `-D warnings`. `all` and `cov` remain as aliases for `dev-check` and
 `coverage`.
 
+GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs
+`cargo xtask dev-check` on `ubuntu-latest` for every push and pull request.
+
 `coverage` builds with `-C instrument-coverage` into `target/cov`, merges the
 profiles with rustup's `llvm-tools` (`rustup component add llvm-tools`), and
 fails unless `llvm-cov report` shows **100% line coverage** for every

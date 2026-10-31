@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  dev-check:
+    name: dev-check (check, fmt, clippy, build, test, coverage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust (stable + clippy, rustfmt, llvm-tools)
+        run: |
+          rustup toolchain install stable --profile minimal \
+            --component clippy,rustfmt,llvm-tools
+          rustup default stable
+          rustc -vV
+
+      # The e2e tests link a `cc -static` hello (libc6-dev is preinstalled)
+      # and run the polyglot through bash, sh and zsh.
+      - name: Install test tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zsh unzip
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo xtask dev-check
+        run: cargo xtask dev-check
