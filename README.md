@@ -257,3 +257,35 @@ The end-to-end tests:
   corpus.
 - `rusty_alloc` is not wired in; `poly-core` deliberately has no
   dependencies.
+
+## License
+
+[ISC](LICENSE), the license Cosmopolitan libc uses. No Cosmopolitan code is
+included; poly reimplements the ideas in Rust from scratch. A FEX binary
+passed with `--emu` stays under its own license (MIT) and is not part of
+this repository.
+
+## Acknowledgements
+
+This project would not exist without
+[Cosmopolitan libc](https://github.com/jart/cosmopolitan) and its
+[Actually Portable Executable](https://justine.lol/ape.html) format, created
+by Justine Tunney and developed by the Cosmopolitan contributors.
+
+APE showed that one file can be a shell script, a Windows PE image and a
+ZIP archive at the same time, and that this works on real systems. poly's
+core ideas come from that work:
+
+- the `MZqFpD='…'` header that is both a DOS `MZ` header and a line of
+  shell;
+- relying on the shell's `ENOEXEC` fallback instead of a binfmt_misc
+  registration;
+- hiding executables in a ZIP read from the end of the file.
+
+The POSIX.1-2024 rule that lets shells run such a file at all came out of
+the Cosmopolitan project's work with the POSIX standards group.
+
+poly takes only the container idea. Each slice is an ordinary binary built
+by the normal Rust toolchain for its own OS, where Cosmopolitan builds one
+binary for all of them. Everything here stands on Cosmopolitan's
+groundwork. Thank you.

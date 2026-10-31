@@ -5,7 +5,7 @@ members = ["poly-core", "poly-pack", "poly-launch", "xtask"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license = "ISC"
 publish = false
 
 [profile.release]
