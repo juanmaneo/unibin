@@ -1,9 +1,13 @@
-//! `cargo xtask <fmt|clippy|test|cov|all>`
+//! `cargo xtask <fmt|clippy|test|cov|all|dist>`
 //!
 //! `cov` builds the workspace with `-C instrument-coverage`, runs every test
 //! (including the binaries spawned by integration tests), merges the
 //! profiles with rustup's `llvm-tools` and fails unless every `poly-*/src`
 //! file reaches 100% line coverage.
+//!
+//! `dist` cross-builds one binary package for every slice target with
+//! cargo-zigbuild / cargo-xwin and packs the slices into a single polyglot
+//! file with `poly-pack`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -11,11 +15,13 @@ use std::{env, fs};
 
 type Result<T = ()> = std::result::Result<T, String>;
 
-const TASKS: &str = "usage: cargo xtask <fmt|clippy|test|cov|all>";
+const TASKS: &str = "usage: cargo xtask <fmt|clippy|test|cov|all>
+       cargo xtask dist [-p <package>] [--emu <FEX-static>] [-o <out>]";
 
 fn main() -> ExitCode {
-    let task = env::args().nth(1).unwrap_or_default();
-    let result = match task.as_str() {
+    let args: Vec<String> = env::args().skip(1).collect();
+    let task = args.first().map(String::as_str).unwrap_or_default();
+    let result = match task {
         "fmt" => fmt(),
         "clippy" => clippy(),
         "test" => test(),
@@ -24,6 +30,7 @@ fn main() -> ExitCode {
             .and_then(|()| clippy())
             .and_then(|()| test())
             .and_then(|()| cov()),
+        "dist" => parse_dist(&args[1..]).and_then(|d| dist(&d)),
         _ => Err(TASKS.to_owned()),
     };
     match result {
@@ -93,6 +100,123 @@ fn test() -> Result {
     let mut c = cargo();
     c.args(["test", "--workspace"]);
     run(c)
+}
+
+/// Slice targets built by `dist`. cargo-zigbuild merges `universal2-apple-darwin`
+/// into one fat Mach-O; the Windows target is also the launcher's.
+const DIST_TARGETS: &[&str] = &[
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "universal2-apple-darwin",
+    "x86_64-unknown-freebsd",
+    WINDOWS_TARGET,
+];
+const WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
+
+#[derive(Debug, PartialEq, Eq)]
+struct Dist {
+    /// Package whose binary of the same name is packed.
+    package: String,
+    emu: Option<PathBuf>,
+    out: Option<PathBuf>,
+}
+
+fn parse_dist(args: &[String]) -> Result<Dist> {
+    let mut d = Dist {
+        package: "poly-pack".to_owned(),
+        emu: None,
+        out: None,
+    };
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        let mut value = || {
+            it.next()
+                .cloned()
+                .ok_or_else(|| format!("{flag} needs a value\n{TASKS}"))
+        };
+        match flag.as_str() {
+            "-p" | "--package" => d.package = value()?,
+            "--emu" => d.emu = Some(absolute(&value()?)?),
+            "-o" | "--output" => d.out = Some(absolute(&value()?)?),
+            _ => return Err(format!("dist: unknown argument {flag:?}\n{TASKS}")),
+        }
+    }
+    Ok(d)
+}
+
+/// User paths are relative to the invoking directory; cargo runs in the root.
+fn absolute(p: &str) -> Result<PathBuf> {
+    std::path::absolute(p).map_err(|e| format!("{p}: {e}"))
+}
+
+/// Where cargo puts `bin` for `target` under `dir`.
+fn artifact(dir: &Path, target: &str, bin: &str) -> PathBuf {
+    let exe = if target.contains("-windows-") {
+        ".exe"
+    } else {
+        ""
+    };
+    dir.join(target).join("release").join(format!("{bin}{exe}"))
+}
+
+fn cross_build(dir: &Path, target: &str, package: &str) -> Result<PathBuf> {
+    let mut c = cargo();
+    c.env("CARGO_TARGET_DIR", dir);
+    if target.contains("-windows-") {
+        c.args(["xwin", "build"]);
+    } else {
+        c.arg("zigbuild");
+    }
+    c.args([
+        "--release",
+        "-p",
+        package,
+        "--bin",
+        package,
+        "--target",
+        target,
+    ]);
+    run(c)?;
+    Ok(artifact(dir, target, package))
+}
+
+fn dist(d: &Dist) -> Result {
+    for tool in ["zigbuild", "xwin"] {
+        let mut c = cargo();
+        c.args([tool, "--help"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        c.status()
+            .ok()
+            .filter(|s| s.success())
+            .ok_or_else(|| {
+            format!("`cargo {tool}` is unavailable: install cargo-{tool}, or run in the Dockerfile image (see README)")
+        })?;
+    }
+    let dir = root().join("target/dist");
+    let launcher = cross_build(&dir, WINDOWS_TARGET, "poly-launch")?;
+    let slices = DIST_TARGETS
+        .iter()
+        .map(|t| cross_build(&dir, t, &d.package))
+        .collect::<Result<Vec<_>>>()?;
+    let out = d
+        .out
+        .clone()
+        .unwrap_or_else(|| dir.join(format!("{}.com", d.package)));
+
+    let mut pack = cargo();
+    pack.env("CARGO_TARGET_DIR", &dir)
+        .args(["run", "-q", "--release", "-p", "poly-pack", "--"])
+        .arg("--launcher")
+        .arg(launcher);
+    for slice in &slices {
+        pack.arg("--slice").arg(slice);
+    }
+    if let Some(emu) = &d.emu {
+        pack.arg("--emu").arg(emu);
+    }
+    pack.arg("-o").arg(&out);
+    run(pack)
 }
 
 /// Directory holding rustup's `llvm-tools` for the active toolchain.
@@ -282,4 +406,57 @@ fn cov() -> Result {
         summary.join("\n  "),
         uncovered.join("\n  ")
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn dist_arguments() {
+        let d = parse_dist(&[]).unwrap();
+        assert_eq!(
+            (d.package.as_str(), d.emu, d.out),
+            ("poly-pack", None, None)
+        );
+        let d = parse_dist(&args(&["-p", "app", "--emu", "/x/fex", "-o", "/y/app"])).unwrap();
+        assert_eq!(d.package, "app");
+        assert_eq!(d.emu.as_deref(), Some(Path::new("/x/fex")));
+        assert_eq!(d.out.as_deref(), Some(Path::new("/y/app")));
+        assert!(
+            parse_dist(&args(&["-o", "rel"]))
+                .unwrap()
+                .out
+                .unwrap()
+                .is_absolute()
+        );
+        assert!(
+            parse_dist(&args(&["-o"]))
+                .unwrap_err()
+                .contains("-o needs a value")
+        );
+        assert!(
+            parse_dist(&args(&["--x"]))
+                .unwrap_err()
+                .contains("unknown argument")
+        );
+    }
+
+    #[test]
+    fn artifact_paths() {
+        let d = Path::new("/t");
+        assert_eq!(
+            artifact(d, WINDOWS_TARGET, "app"),
+            Path::new("/t/x86_64-pc-windows-msvc/release/app.exe")
+        );
+        assert_eq!(
+            artifact(d, "universal2-apple-darwin", "app"),
+            Path::new("/t/universal2-apple-darwin/release/app")
+        );
+        assert!(DIST_TARGETS.contains(&WINDOWS_TARGET));
+    }
 }

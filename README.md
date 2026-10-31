@@ -127,10 +127,19 @@ cargo-xwin and the rustup targets. It works with Docker, Podman and Buildah:
 ```sh
 podman build -t poly-dev .            # or: docker build / buildah bud
 podman run --rm -v "$PWD":/src:Z -v poly-target:/src/target poly-dev   # cargo xtask all
+podman run --rm -v "$PWD":/src:Z -v poly-target:/src/target poly-dev \
+    cargo xtask dist -o /src/poly-pack.com
 ```
 
-The commands in this section were run in that image to pack `poly-pack` into
-a single polyglot `poly-pack.com`:
+`cargo xtask dist [-p <package>] [--emu <FEX-static>] [-o <out>]` does the
+whole release: it builds the `poly-launch` stub and the package's
+same-named binary for every target below, then runs `poly-pack` on the
+results. The default package is `poly-pack` and the default output is
+`target/dist/<package>.com`. Relative paths are resolved from where you run
+it. The zig and MSVC SDK download caches live under `target/`, so the
+`poly-target` volume keeps them between `--rm` runs.
+
+The equivalent manual steps (all run in that image):
 
 ```sh
 # Linux: static musl, no glibc version floor
@@ -197,6 +206,7 @@ Appending the ZIP would invalidate any signature, so sign last:
 ```sh
 cargo xtask all     # fmt --check, clippy -D warnings, tests, coverage gate
 cargo xtask cov     # just the coverage gate
+cargo xtask dist    # cross-build and pack a release polyglot (needs zigbuild/xwin)
 ```
 
 `cov` builds with `-C instrument-coverage` into `target/cov`, merges the

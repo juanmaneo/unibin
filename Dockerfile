@@ -8,7 +8,7 @@
 #
 #   podman run --rm -v "$PWD":/src:Z -v poly-target:/src/target poly-dev
 #   podman run --rm -v "$PWD":/src:Z -v poly-target:/src/target poly-dev \
-#       cargo zigbuild --release -p poly-pack --target x86_64-unknown-linux-musl
+#       cargo xtask dist -o /src/poly-pack.com     # release polyglot
 #
 # The default command is `cargo xtask all`. The named `poly-target` volume
 # keeps the container's build artifacts apart from the host's `target/`.
@@ -59,7 +59,11 @@ RUN cargo install --locked cargo-zigbuild cargo-xwin \
  && rm -rf "$CARGO_HOME/registry" "$CARGO_HOME/git"
 
 # cargo-xwin downloads the MSVC CRT/SDK on first use; this accepts its license.
-ENV XWIN_ACCEPT_LICENSE=1
+# Both download caches live in the (volume-backed) target dir so `--rm`
+# containers don't refetch them.
+ENV XWIN_ACCEPT_LICENSE=1 \
+    XWIN_CACHE_DIR=/src/target/xwin-cache \
+    ZIG_GLOBAL_CACHE_DIR=/src/target/zig-cache
 
 WORKDIR /src
 CMD ["cargo", "xtask", "all"]
