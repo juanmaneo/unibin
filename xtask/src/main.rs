@@ -5,12 +5,12 @@
 //!
 //! `coverage` (alias `cov`) builds the workspace with `-C instrument-coverage`, runs every test
 //! (including the binaries spawned by integration tests), merges the
-//! profiles with rustup's `llvm-tools` and fails unless every `poly-*/src`
+//! profiles with rustup's `llvm-tools` and fails unless every `unibin-*/src`
 //! file reaches 100% line coverage.
 //!
 //! `dist` cross-builds one binary package for every slice target with
 //! cargo-zigbuild / cargo-xwin and packs the slices into a single polyglot
-//! file with `poly-pack`.
+//! file with `unibin-pack`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -22,7 +22,7 @@ const TASKS: &str = "usage: cargo xtask <check|fmt|clippy|build|test|coverage|de
        cargo xtask dist [-p <package>] [--emu <FEX-static>] [-o <out>]
 
   dev-check   pre-push gate: check, fmt, clippy, build, test, coverage (alias: all)
-  coverage    100% line-coverage gate on poly-* sources (alias: cov)
+  coverage    100% line-coverage gate on unibin-* sources (alias: cov)
   dist        cross-build every slice target and pack a release polyglot";
 
 type Step = (&'static str, fn() -> Result);
@@ -160,7 +160,7 @@ struct Dist {
 
 fn parse_dist(args: &[String]) -> Result<Dist> {
     let mut d = Dist {
-        package: "poly-pack".to_owned(),
+        package: "unibin-pack".to_owned(),
         emu: None,
         out: None,
     };
@@ -231,7 +231,7 @@ fn dist(d: &Dist) -> Result {
         })?;
     }
     let dir = root().join("target/dist");
-    let launcher = cross_build(&dir, WINDOWS_TARGET, "poly-launch")?;
+    let launcher = cross_build(&dir, WINDOWS_TARGET, "unibin-launch")?;
     let slices = DIST_TARGETS
         .iter()
         .map(|t| cross_build(&dir, t, &d.package))
@@ -243,7 +243,7 @@ fn dist(d: &Dist) -> Result {
 
     let mut pack = cargo();
     pack.env("CARGO_TARGET_DIR", &dir)
-        .args(["run", "-q", "--release", "-p", "poly-pack", "--"])
+        .args(["run", "-q", "--release", "-p", "unibin-pack", "--"])
         .arg("--launcher")
         .arg(launcher);
     for slice in &slices {
@@ -298,7 +298,7 @@ fn executables(json: &str) -> Vec<String> {
         .collect()
 }
 
-/// Source files under `poly-*/src` that contain code.
+/// Source files under `unibin-*/src` that contain code.
 fn sources(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
     let mut stack: Vec<PathBuf> = fs::read_dir(root)
@@ -308,7 +308,7 @@ fn sources(root: &Path) -> Vec<String> {
         .map(|e| e.path())
         .filter(|p| {
             p.file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with("poly-"))
+                .is_some_and(|n| n.to_string_lossy().starts_with("unibin-"))
         })
         .map(|p| p.join("src"))
         .collect();
@@ -385,7 +385,7 @@ fn coverage() -> Result {
         let mut c = cargo();
         c.env("RUSTFLAGS", "-C instrument-coverage")
             .env("CARGO_TARGET_DIR", &target)
-            .env("LLVM_PROFILE_FILE", profraw.join("poly-%p-%m.profraw"))
+            .env("LLVM_PROFILE_FILE", profraw.join("unibin-%p-%m.profraw"))
             .args(["test", "--workspace", "--exclude", "xtask"]);
         c
     };
@@ -399,7 +399,7 @@ fn coverage() -> Result {
         .flatten()
         .map(|e| e.path())
         .collect();
-    let merged = target.join("poly.profdata");
+    let merged = target.join("unibin.profdata");
     let mut merge = Command::new(bin.join("llvm-profdata"));
     merge
         .args(["merge", "-sparse", "-o"])
@@ -425,7 +425,7 @@ fn coverage() -> Result {
     print!("{table}");
     let problems = coverage_gate(&table, &sources(&root));
     if problems.is_empty() {
-        eprintln!("xtask: coverage gate ok (100% lines on poly-* sources)");
+        eprintln!("xtask: coverage gate ok (100% lines on unibin-* sources)");
         return Ok(());
     }
     let mut show = llvm_cov("show");
@@ -458,7 +458,7 @@ mod tests {
         let d = parse_dist(&[]).unwrap();
         assert_eq!(
             (d.package.as_str(), d.emu, d.out),
-            ("poly-pack", None, None)
+            ("unibin-pack", None, None)
         );
         let d = parse_dist(&args(&["-p", "app", "--emu", "/x/fex", "-o", "/y/app"])).unwrap();
         assert_eq!(d.package, "app");

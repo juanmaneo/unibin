@@ -300,7 +300,7 @@ mod tests {
         );
         assert_eq!(b.len, 0);
         let eocd = w.eocd_offset();
-        let out = w.finish(b"poly=1\n").unwrap();
+        let out = w.finish(b"unibin=1\n").unwrap();
         assert_eq!(&out[eocd as usize..eocd as usize + 4], b"PK\x05\x06");
         out
     }
@@ -316,7 +316,7 @@ mod tests {
         let z = sample();
         let eocd = find_eocd(&z).unwrap();
         assert_eq!(eocd.entries, 2);
-        assert_eq!(eocd.comment.slice(&z).unwrap(), b"poly=1\n");
+        assert_eq!(eocd.comment.slice(&z).unwrap(), b"unibin=1\n");
         let cd = read_central_directory(&z, &eocd).unwrap();
         assert_eq!(cd.len(), 2);
         assert_eq!(cd[0].name, "a.bin");

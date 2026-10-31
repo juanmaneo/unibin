@@ -1,6 +1,6 @@
-# poly — one executable file for Linux, FreeBSD, macOS and Windows
+# Unibin - One executable file for Linux, FreeBSD, macOS and Windows
 
-`poly-pack` combines native executables ("slices") into **one file**. That
+`unibin-pack` combines native executables ("slices") into **one file**. That
 file runs on Linux, FreeBSD, macOS and Windows 11+, on x86_64 and arm64,
 with nothing to install: no binfmt_misc registration, no admin rights and no
 runtime.
@@ -22,20 +22,20 @@ binary built by the normal Rust toolchain for its own target.
 
 | Crate         | Role |
 |---------------|------|
-| `poly-core`   | Format library with **zero external dependencies**: stored ZIP writer/reader, manifest, `sh` prologue, PE relocation, slice sniffing, packing, extraction plans |
-| `poly-pack`   | CLI that writes the polyglot |
-| `poly-launch` | The Windows launcher stub embedded as the PE image (pure Rust, std only) |
+| `unibin-core`   | Format library with **zero external dependencies**: stored ZIP writer/reader, manifest, `sh` prologue, PE relocation, slice sniffing, packing, extraction plans |
+| `unibin-pack`   | CLI that writes the polyglot |
+| `unibin-launch` | The Windows launcher stub embedded as the PE image (pure Rust, std only) |
 | `xtask`       | `dev-check` pre-push gate (check, fmt, clippy, build, test, coverage with a 100% line gate) and `dist` |
 
 ## File layout
 
 ```
-0x000  MZqFpD='poly' #<spaces>     sh line 1; "MZ" is the PE e_magic
+0x000  MZqFpD='unibin' #<spaces>   sh line 1; "MZ" is the PE e_magic
 0x038  \n                          first newline: below 0x3C, no NUL before it
 0x039  #  <e_lfanew LE32>\n        sh comment hiding e_lfanew at 0x3C
 0x041  sh script … exit 1\n        picks, extracts and execs a slice
        \n padding to FileAlignment
-P      PE launcher image           relocated copy of poly-launch.exe
+P      PE launcher image           relocated copy of unibin-launch.exe
 S…     slice bytes                 stored (uncompressed) ZIP entries
        ZIP central directory
        EOCD + comment              the comment is the text manifest
@@ -60,7 +60,7 @@ Why each piece works:
 The EOCD comment holds the manifest:
 
 ```
-poly=1
+unibin=1
 emu=Linux-aarch64
 emu_payload=2101248,9437184
 Linux-x86_64=1536,354384
@@ -85,7 +85,7 @@ The prologue is plain POSIX `sh` and uses only `tail`, `head`, `od`, `sed`,
    appends data.
 3. Reads the manifest. Binary data is only ever *piped*. Command substitution
    would silently drop NUL bytes.
-4. Extracts the chosen slice into `mktemp -d "${TMPDIR:-/tmp}/poly.XXXXXX"`
+4. Extracts the chosen slice into `mktemp -d "${TMPDIR:-/tmp}/unibin.XXXXXX"`
    and `exec`s it. A small background watcher deletes the directory once the
    shell's PID (now the slice's) exits. The running file is never rewritten
    in place (that would hit `ETXTBSY`).
@@ -96,7 +96,7 @@ and 127 if `$0` cannot be found.
 ## Usage
 
 ```sh
-poly-pack --launcher poly-launch.exe \
+unibin-pack --launcher unibin-launch.exe \
           --slice app-linux-x86_64 \
           --slice app-linux-aarch64 \
           --slice app-macos-universal \
@@ -109,12 +109,12 @@ poly-pack --launcher poly-launch.exe \
 The key of each slice is detected from its content: ELF `EI_OSABI` and
 FreeBSD ABI note, Mach-O magic and CPU type, PE machine. An explicit
 `--slice file=Darwin-aarch64` must agree with the content. Use it to
-register only part of a fat binary. `poly-pack` rejects duplicate keys, 32-bit
+register only part of a fat binary. `unibin-pack` rejects duplicate keys, 32-bit
 or foreign-arch binaries, and an `--emu` that is not a static Linux-aarch64
 ELF or has no `Linux-x86_64` slice to run. The output is written with mode
 0755 and is byte-for-byte reproducible.
 
-`poly-launch` must be the **unsigned x86_64** build. On Windows it opens its
+`unibin-launch` must be the **unsigned x86_64** build. On Windows it opens its
 own image and reads the manifest. It then extracts `Windows-x86_64` to
 `%TEMP%`, runs it with the same arguments, waits, and returns its exit code.
 Ctrl-C is left to the child. The temp directory is removed afterwards.
@@ -125,19 +125,19 @@ The [`Dockerfile`](Dockerfile) sets up everything below: zig, cargo-zigbuild,
 cargo-xwin and the rustup targets. It works with Docker, Podman and Buildah:
 
 ```sh
-podman build -t poly-dev .            # or: docker build / buildah bud
-podman run --rm -v "$PWD":/src:Z -v poly-target:/src/target poly-dev   # cargo xtask dev-check
-podman run --rm -v "$PWD":/src:Z -v poly-target:/src/target poly-dev \
-    cargo xtask dist -o /src/poly-pack.com
+podman build -t unibin-dev .            # or: docker build / buildah bud
+podman run --rm -v "$PWD":/src:Z -v unibin-target:/src/target unibin-dev   # cargo xtask dev-check
+podman run --rm -v "$PWD":/src:Z -v unibin-target:/src/target unibin-dev \
+    cargo xtask dist -o /src/unibin-pack.com
 ```
 
 `cargo xtask dist [-p <package>] [--emu <FEX-static>] [-o <out>]` does the
-whole release: it builds the `poly-launch` stub and the package's
-same-named binary for every target below, then runs `poly-pack` on the
-results. The default package is `poly-pack` and the default output is
+whole release: it builds the `unibin-launch` stub and the package's
+same-named binary for every target below, then runs `unibin-pack` on the
+results. The default package is `unibin-pack` and the default output is
 `target/dist/<package>.com`. Relative paths are resolved from where you run
 it. The zig and MSVC SDK download caches live under `target/`, so the
-`poly-target` volume keeps them between `--rm` runs.
+`unibin-target` volume keeps them between `--rm` runs.
 
 The equivalent manual steps (all run in that image):
 
@@ -151,13 +151,13 @@ cargo zigbuild --release --target universal2-apple-darwin
 cargo zigbuild --release --target x86_64-unknown-freebsd
 # Windows: MSVC ABI, CRT/SDK fetched by cargo-xwin
 cargo xwin build --release --target x86_64-pc-windows-msvc
-cargo xwin build --release -p poly-launch --target x86_64-pc-windows-msvc
+cargo xwin build --release -p unibin-launch --target x86_64-pc-windows-msvc
 ```
 
 Notes:
 
 - zig/lld brand FreeBSD executables only with a `FreeBSD` ABI-tag note and
-  leave `EI_OSABI` at 0. `poly-pack` detects the note and sets byte 7 to
+  leave `EI_OSABI` at 0. `unibin-pack` detects the note and sets byte 7 to
   `ELFOSABI_FREEBSD` (9), as `brandelf -t FreeBSD` would. FreeBSD is the only
   UNIX that checks it.
 - Without an SDK, zigbuild warns that `xcrun` is missing. Pure-Rust binaries
@@ -180,7 +180,7 @@ Appending the ZIP would invalidate any signature, so sign last:
 - **Windows:** `signtool sign … app` on the packed file works. The certificate
   table is appended after the ZIP. Because the packed length is a multiple of
   8, signtool adds no padding before it. The shell still finds the archive
-  through the baked `e=` offset, and `poly-core` ignores a trailing
+  through the baked `e=` offset, and `unibin-core` ignores a trailing
   certificate table (`pe::logical_end`).
 - **Slices:** sign macOS (`codesign`) and Windows slices **before** packing.
   They are stored byte-for-byte and extracted unchanged, so their signatures
@@ -221,10 +221,10 @@ GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs
 `coverage` builds with `-C instrument-coverage` into `target/cov`, merges the
 profiles with rustup's `llvm-tools` (`rustup component add llvm-tools`), and
 fails unless `llvm-cov report` shows **100% line coverage** for every
-`poly-*/src` file. A successful run ends with:
+`unibin-*/src` file. A successful run ends with:
 
 ```
-xtask: coverage gate ok (100% lines on poly-* sources)
+xtask: coverage gate ok (100% lines on unibin-* sources)
 ```
 
 When the gate fails it prints the uncovered lines. Watch for these
@@ -245,7 +245,7 @@ The end-to-end tests:
 - use a fake `uname` to drive every host branch of the prologue (FreeBSD,
   Darwin with the Rosetta fallback, Linux aarch64 with the emulator, no
   slice);
-- run the real `poly-launch` binary against an appended archive.
+- run the real `unibin-launch` binary against an appended archive.
 
 ## Known limitations
 
@@ -255,13 +255,13 @@ The end-to-end tests:
 - FEX is C++ and stays behind an exec boundary. It would be replaced only by
   a pure-Rust x86→arm64 JIT that matches it on a differential benchmark
   corpus.
-- `rusty_alloc` is not wired in; `poly-core` deliberately has no
+- `rusty_alloc` is not wired in; `unibin-core` deliberately has no
   dependencies.
 
 ## License
 
 [ISC](LICENSE), the license Cosmopolitan libc uses. No Cosmopolitan code is
-included; poly reimplements the ideas in Rust from scratch. A FEX binary
+included; unibin reimplements the ideas in Rust from scratch. A FEX binary
 passed with `--emu` stays under its own license (MIT) and is not part of
 this repository.
 
@@ -273,7 +273,7 @@ This project would not exist without
 by Justine Tunney and developed by the Cosmopolitan contributors.
 
 APE showed that one file can be a shell script, a Windows PE image and a
-ZIP archive at the same time, and that this works on real systems. poly's
+ZIP archive at the same time, and that this works on real systems. unibin's
 core ideas come from that work:
 
 - the `MZqFpD='…'` header that is both a DOS `MZ` header and a line of
@@ -285,7 +285,7 @@ core ideas come from that work:
 The POSIX.1-2024 rule that lets shells run such a file at all came out of
 the Cosmopolitan project's work with the POSIX standards group.
 
-poly takes only the container idea. Each slice is an ordinary binary built
+unibin takes only the container idea. Each slice is an ordinary binary built
 by the normal Rust toolchain for its own OS, where Cosmopolitan builds one
 binary for all of them. Everything here stands on Cosmopolitan's
 groundwork. Thank you.

@@ -1,4 +1,4 @@
-//! `poly-core`: the container format behind single-file polyglot executables.
+//! `unibin-core`: the container format behind single-file polyglot executables.
 //!
 //! One output file is simultaneously:
 //!

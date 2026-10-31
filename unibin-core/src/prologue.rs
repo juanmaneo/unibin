@@ -1,7 +1,7 @@
 //! The POSIX `sh` prologue that doubles as the PE DOS header.
 //!
 //! ```text
-//! 0x00  MZqFpD='poly' #<spaces>          line 1: e_magic "MZ", then a comment
+//! 0x00  MZqFpD='unibin' #<spaces>        line 1: e_magic "MZ", then a comment
 //! 0x38  \n                               first newline, before e_lfanew
 //! 0x39  #<sp><sp><e_lfanew LE32>\n       line 2: comment hiding e_lfanew (0x3C)
 //! 0x41  script ... exit 1\n              selects, extracts and execs a slice
@@ -24,18 +24,18 @@ pub const LFANEW_AT: usize = 0x3C;
 /// Offset of the first newline; must be below [`LFANEW_AT`].
 pub const FIRST_NEWLINE: usize = 0x38;
 const HEADER_LEN: usize = 0x41;
-const LINE1: &[u8] = b"MZqFpD='poly' #";
+const LINE1: &[u8] = b"MZqFpD='unibin' #";
 const EOCD_FIELD: &str = "@EOCD@";
 const EOCD_WIDTH: usize = 20; // u64::MAX has 20 digits
 
-const SCRIPT: &str = r#"# poly: one file, many OSes. Re-sign only after packing.
+const SCRIPT: &str = r#"# unibin: one file, many OSes. Re-sign only after packing.
 o=$0
 case $o in */*) ;; *) o=$(command -v "$o") || exit 127 ;; esac
 e=@EOCD@
 z() { tail -c +$(($1+1)) "$o" | head -c $2; }
 u() { echo $(($1+256*$2)); }
 w() { echo $*; }
-[ "$(w $(z $e 4 | od -An -tx1))" = "50 4b 05 06" ] || { echo "poly: $o: damaged archive" >&2; exit 126; }
+[ "$(w $(z $e 4 | od -An -tx1))" = "50 4b 05 06" ] || { echo "unibin: $o: damaged archive" >&2; exit 126; }
 m=$(z $((e+22)) $(u $(z $((e+20)) 2 | od -An -tu1)))
 g() { printf '%s\n' "$m" | sed -n "s/^$1=//p"; }
 s=$(uname -s) a=$(uname -m) x=
@@ -44,8 +44,8 @@ k=$s-$a
 r=$(g $k)
 if [ -z "$r" ] && [ $k = Darwin-aarch64 ]; then r=$(g Darwin-x86_64); fi
 if [ -z "$r" ] && [ $k = Linux-aarch64 ] && [ "$(g emu)" = $k ]; then r=$(g Linux-x86_64) x=$(g emu_payload); fi
-[ -n "$r" ] || { echo "poly: $o has no slice for $k" >&2; exit 126; }
-d=$(mktemp -d "${TMPDIR:-/tmp}/poly.XXXXXX") || exit 126
+[ -n "$r" ] || { echo "unibin: $o has no slice for $k" >&2; exit 126; }
+d=$(mktemp -d "${TMPDIR:-/tmp}/unibin.XXXXXX") || exit 126
 (trap '' HUP INT; while kill -0 $$; do sleep 1; done; rm -rf "$d") >/dev/null 2>&1 &
 f=$d/${o##*/}
 z ${r%,*} ${r#*,} >"$f" && chmod 700 "$f" || exit 126

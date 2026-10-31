@@ -99,7 +99,7 @@ impl<'a> Archive<'a> {
         let eocd = zip::find_eocd(data)?;
         let entries = zip::read_central_directory(data, &eocd)?;
         let text = std::str::from_utf8(eocd.comment.slice(data)?)
-            .map_err(|_| Error::new("poly manifest is not UTF-8"))?;
+            .map_err(|_| Error::new("unibin manifest is not UTF-8"))?;
         let manifest = Manifest::parse(text)?;
         Ok(Archive {
             data,
@@ -166,7 +166,7 @@ pub fn temp_dir(base: &Path) -> Result<PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.subsec_nanos());
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = base.join(format!("poly-{}-{n}-{nanos}", std::process::id()));
+    let dir = base.join(format!("unibin-{}-{n}-{nanos}", std::process::id()));
     #[cfg_attr(not(unix), allow(unused_mut))]
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
@@ -249,7 +249,7 @@ mod tests {
     }
 
     // 6-byte prefix + 30-byte local header + 12-byte name = 48, and so on.
-    const GOOD: &str = "poly=1\nemu=Linux-aarch64\nemu_payload=104,3\nLinux-x86_64=48,22\n";
+    const GOOD: &str = "unibin=1\nemu=Linux-aarch64\nemu_payload=104,3\nLinux-x86_64=48,22\n";
 
     #[test]
     fn open_and_payload() {
@@ -266,12 +266,12 @@ mod tests {
     fn open_errors() {
         assert!(Archive::open(b"tiny").is_err());
         assert!(
-            Archive::open(&archive_bytes("poly=7\n"))
+            Archive::open(&archive_bytes("unibin=7\n"))
                 .unwrap_err()
                 .0
                 .contains("version")
         );
-        let e = Archive::open(&archive_bytes("poly=1\n\u{e9}")).unwrap_err();
+        let e = Archive::open(&archive_bytes("unibin=1\n\u{e9}")).unwrap_err();
         assert!(e.0.contains("no '='"), "{e}");
         let mut z = archive_bytes(GOOD);
         let n = z.len();
@@ -327,7 +327,7 @@ mod tests {
         assert_ne!(other, dir);
         fs::remove_dir_all(&dir).unwrap();
         fs::remove_dir_all(&other).unwrap();
-        let e = temp_dir(&base.join("poly-does-not-exist/x")).unwrap_err();
+        let e = temp_dir(&base.join("unibin-does-not-exist/x")).unwrap_err();
         assert!(e.0.contains("cannot create"), "{e}");
     }
 }

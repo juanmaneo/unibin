@@ -1,7 +1,7 @@
 //! Text manifest stored in the ZIP EOCD comment.
 //!
 //! ```text
-//! poly=1
+//! unibin=1
 //! emu=Linux-aarch64
 //! emu_payload=<off>,<len>
 //! Linux-x86_64=<off>,<len>
@@ -56,7 +56,7 @@ impl Manifest {
     }
 
     pub fn render(&self) -> String {
-        let mut s = format!("poly={VERSION}\n");
+        let mut s = format!("unibin={VERSION}\n");
         if let Some((host, span)) = &self.emu {
             s += &format!("emu={host}\nemu_payload={},{}\n", span.off, span.len);
         }
@@ -76,7 +76,7 @@ impl Manifest {
                 .split_once('=')
                 .ok_or_else(|| Error::new(format!("manifest line {line:?} has no '='")))?;
             match k {
-                "poly" => version = Some(v),
+                "unibin" => version = Some(v),
                 "emu" => emu_host = Some(check_key(v).map(|()| v.to_owned())?),
                 "emu_payload" => emu_payload = Some(parse_span(v)?),
                 _ => {
@@ -90,10 +90,10 @@ impl Manifest {
         }
         match version {
             Some(VERSION) => {}
-            None => return Err(Error::new("not a poly manifest (missing poly=1)")),
+            None => return Err(Error::new("not a unibin manifest (missing unibin=1)")),
             Some(v) => {
                 return Err(Error::new(format!(
-                    "unsupported poly manifest version {v:?}"
+                    "unsupported unibin manifest version {v:?}"
                 )));
             }
         }
@@ -148,7 +148,7 @@ mod tests {
         let text = sample().render();
         assert_eq!(
             text,
-            "poly=1\nemu=Linux-aarch64\nemu_payload=9000,77\nLinux-x86_64=4608,12345\n\
+            "unibin=1\nemu=Linux-aarch64\nemu_payload=9000,77\nLinux-x86_64=4608,12345\n\
              Darwin-x86_64=20000,10\nDarwin-aarch64=20000,10\n"
         );
     }
@@ -203,18 +203,21 @@ mod tests {
     #[test]
     fn parse_errors() {
         let cases = [
-            ("Linux-x86_64=1,2\n", "missing poly=1"),
-            ("poly=2\n", "unsupported"),
-            ("poly=1\nnonsense\n", "no '='"),
-            ("poly=1\nLinux-x86_64=1\n", "invalid span"),
-            ("poly=1\nLinux-x86_64=a,2\n", "invalid span"),
-            ("poly=1\nLinux-x86_64=1,b\n", "invalid span"),
-            ("poly=1\nbad key=1,2\n", "invalid slice key"),
-            ("poly=1\nLinux-x86_64=1,2\nLinux-x86_64=3,4\n", "duplicate"),
-            ("poly=1\nemu=Linux-aarch64\n", "emu without"),
-            ("poly=1\nemu_payload=1,2\n", "emu without"),
-            ("poly=1\nemu=nope\n", "invalid slice key"),
-            ("poly=1\nemu_payload=x\n", "invalid span"),
+            ("Linux-x86_64=1,2\n", "missing unibin=1"),
+            ("unibin=2\n", "unsupported"),
+            ("unibin=1\nnonsense\n", "no '='"),
+            ("unibin=1\nLinux-x86_64=1\n", "invalid span"),
+            ("unibin=1\nLinux-x86_64=a,2\n", "invalid span"),
+            ("unibin=1\nLinux-x86_64=1,b\n", "invalid span"),
+            ("unibin=1\nbad key=1,2\n", "invalid slice key"),
+            (
+                "unibin=1\nLinux-x86_64=1,2\nLinux-x86_64=3,4\n",
+                "duplicate",
+            ),
+            ("unibin=1\nemu=Linux-aarch64\n", "emu without"),
+            ("unibin=1\nemu_payload=1,2\n", "emu without"),
+            ("unibin=1\nemu=nope\n", "invalid slice key"),
+            ("unibin=1\nemu_payload=x\n", "invalid span"),
         ];
         for (text, want) in cases {
             let e = Manifest::parse(text).unwrap_err();

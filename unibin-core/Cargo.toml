@@ -1,5 +1,5 @@
 [package]
-name = "poly-core"
+name = "unibin-core"
 description = "Container format for single-file, multi-OS, multi-arch executables"
 version.workspace = true
 edition.workspace = true

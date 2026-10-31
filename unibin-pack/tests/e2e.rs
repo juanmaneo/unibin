@@ -1,16 +1,16 @@
-//! End-to-end: pack real and fake slices with the `poly-pack` binary and run
+//! End-to-end: pack real and fake slices with the `unibin-pack` binary and run
 //! the result through the POSIX shell prologue.
 #![cfg(target_os = "linux")]
 
-use poly_core::extract::Archive;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
+use unibin_core::extract::Archive;
 
-const PACK: &str = env!("CARGO_BIN_EXE_poly-pack");
-const MARKER: &str = "hello from poly";
+const PACK: &str = env!("CARGO_BIN_EXE_unibin-pack");
+const MARKER: &str = "hello from unibin";
 
 fn scratch(name: &str) -> PathBuf {
     static N: AtomicU32 = AtomicU32::new(0);
@@ -78,7 +78,7 @@ fn hello(dir: &Path) -> String {
     let src = dir.join("hello.c");
     fs::write(
         &src,
-        "#include <stdio.h>\nint main(int c, char **v) { printf(\"hello from poly\");\n\
+        "#include <stdio.h>\nint main(int c, char **v) { printf(\"hello from unibin\");\n\
          for (int i = 1; i < c; i++) printf(\" [%s]\", v[i]); printf(\"\\n\"); return c - 1; }\n",
     )
     .unwrap();
@@ -95,18 +95,18 @@ fn hello(dir: &Path) -> String {
     out.to_string_lossy().into_owned()
 }
 
-fn poly_pack(args: &[&str]) -> Output {
+fn unibin_pack(args: &[&str]) -> Output {
     Command::new(PACK).args(args).output().unwrap()
 }
 
 fn pack_ok(args: &[&str]) {
-    let o = poly_pack(args);
+    let o = unibin_pack(args);
     assert!(
         o.status.success(),
-        "poly-pack failed: {}",
+        "unibin-pack failed: {}",
         String::from_utf8_lossy(&o.stderr)
     );
-    assert!(String::from_utf8_lossy(&o.stdout).starts_with("poly-pack: wrote "));
+    assert!(String::from_utf8_lossy(&o.stdout).starts_with("unibin-pack: wrote "));
 }
 
 fn sh(dir: &Path, program: &str, script: &str, args: &[&str]) -> Output {
@@ -375,7 +375,7 @@ fn damaged_archive_is_reported() {
         &out.to_string_lossy(),
     ]);
     let mut data = fs::read(&out).unwrap();
-    let eocd = poly_core::zip::find_eocd(&data).unwrap().offset as usize;
+    let eocd = unibin_core::zip::find_eocd(&data).unwrap().offset as usize;
     data[eocd] = b'X';
     fs::write(&out, data).unwrap();
     let o = Command::new("/bin/sh")
@@ -396,7 +396,7 @@ fn cli_rejects_bad_input() {
     let linux = write(&dir, "linux", &fake_elf(0, 62));
     let out = dir.join("o").to_string_lossy().into_owned();
     let err = |args: &[&str]| {
-        let o = poly_pack(args);
+        let o = unibin_pack(args);
         assert_eq!(o.status.code(), Some(1), "{args:?}");
         String::from_utf8_lossy(&o.stderr).into_owned()
     };
@@ -460,7 +460,7 @@ fn cli_rejects_bad_input() {
         .contains("cannot write")
     );
     assert!(err(&["--launcher", &launcher, "--slice", &out, "-o", &out]).contains("cannot read"));
-    let help = poly_pack(&["--help"]);
-    assert!(help.status.success() && stdout(&help).contains("usage: poly-pack"));
+    let help = unibin_pack(&["--help"]);
+    assert!(help.status.success() && stdout(&help).contains("usage: unibin-pack"));
     let _ = fs::remove_dir_all(&dir);
 }

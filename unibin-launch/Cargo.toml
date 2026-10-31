@@ -1,5 +1,5 @@
 [package]
-name = "poly-launch"
+name = "unibin-launch"
 description = "Launcher stub embedded as the PE image of a polyglot executable"
 version.workspace = true
 edition.workspace = true
@@ -7,4 +7,4 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-poly-core = { path = "../poly-core" }
+unibin-core = { path = "../unibin-core" }

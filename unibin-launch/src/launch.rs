@@ -1,9 +1,9 @@
-use poly_core::extract::{Archive, Plan, plan, temp_dir};
-use poly_core::{Error, Result};
 use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
+use unibin_core::extract::{Archive, Plan, plan, temp_dir};
+use unibin_core::{Error, Result};
 
 /// Exit code when the launcher itself fails (mirrors the shell's 126).
 pub const LAUNCH_FAILED: i32 = 126;
@@ -41,7 +41,7 @@ fn run(exe: io::Result<PathBuf>, args: Vec<OsString>, host: &str, tmp: &Path) ->
     let plan = plan(&archive.manifest, host)?;
     let name = exe
         .file_name()
-        .map_or("poly".into(), |n| n.to_string_lossy().into_owned());
+        .map_or("unibin".into(), |n| n.to_string_lossy().into_owned());
     let dir = temp_dir(tmp)?;
     let result = execute(&archive, &plan, &dir, &name, args);
     // The child has exited, so its image is no longer locked (Windows) and can go.
@@ -58,7 +58,7 @@ pub fn run_main_with(
     err: &mut dyn Write,
 ) -> i32 {
     run(exe, args, host, tmp).unwrap_or_else(|e| {
-        let _ = writeln!(err, "poly-launch: {e}");
+        let _ = writeln!(err, "unibin-launch: {e}");
         LAUNCH_FAILED
     })
 }
@@ -88,10 +88,10 @@ pub fn forward_ctrl_c_to_child() {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use poly_core::manifest::Manifest;
-    use poly_core::zip::ZipWriter;
     use std::fs;
     use std::sync::{Mutex, MutexGuard, PoisonError};
+    use unibin_core::manifest::Manifest;
+    use unibin_core::zip::ZipWriter;
 
     /// The launcher is single-threaded; the test harness is not. A fork in one
     /// test thread can inherit another thread's still-open write fd to a fresh
@@ -192,7 +192,7 @@ mod tests {
         let (code, err) = f.run(&exe, &[], "FreeBSD-x86_64");
         assert_eq!(code, LAUNCH_FAILED);
         assert!(
-            err.starts_with("poly-launch: no slice for FreeBSD-x86_64"),
+            err.starts_with("unibin-launch: no slice for FreeBSD-x86_64"),
             "{err}"
         );
 

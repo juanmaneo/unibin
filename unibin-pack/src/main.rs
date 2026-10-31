@@ -1,15 +1,15 @@
-//! `poly-pack --launcher <pe> --slice <file>[=OS-arch]... [--emu <fex>] -o <out>`
+//! `unibin-pack --launcher <pe> --slice <file>[=OS-arch]... [--emu <fex>] -o <out>`
 
-use poly_core::manifest::check_key;
-use poly_core::pack::{Input, Slice, pack};
-use poly_core::{Error, Result};
 use std::io::Write;
 use std::process::ExitCode;
+use unibin_core::manifest::check_key;
+use unibin_core::pack::{Input, Slice, pack};
+use unibin_core::{Error, Result};
 
 const USAGE: &str = "\
-usage: poly-pack --launcher <poly-launch.exe> --slice <file>[=OS-arch]... [--emu <FEX-static>] -o <out>
+usage: unibin-pack --launcher <unibin-launch.exe> --slice <file>[=OS-arch]... [--emu <FEX-static>] -o <out>
 
-  --launcher <pe>       unsigned x86_64 Windows launcher stub (poly-launch.exe)
+  --launcher <pe>       unsigned x86_64 Windows launcher stub (unibin-launch.exe)
   --slice <file>[=KEY]  native executable; KEY (e.g. Linux-x86_64) is detected from
                         the file and, if given, must match it. Repeatable.
   --emu <file>          static Linux-aarch64 x86_64 emulator (FEX), used on
@@ -109,7 +109,7 @@ fn run(args: Args, out: &mut dyn Write) -> Result<()> {
         ""
     };
     let (path, size, keys) = (&args.out, bytes.len(), keys.join(", "));
-    writeln!(out, "poly-pack: wrote {path} ({size} bytes): {keys}{emu}")?;
+    writeln!(out, "unibin-pack: wrote {path} ({size} bytes): {keys}{emu}")?;
     Ok(())
 }
 
@@ -123,7 +123,7 @@ fn run_main_with(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) ->
     match result {
         Ok(()) => 0,
         Err(e) => {
-            let _ = writeln!(err, "poly-pack: {e}");
+            let _ = writeln!(err, "unibin-pack: {e}");
             1
         }
     }
@@ -198,10 +198,10 @@ mod tests {
     fn help_and_errors_through_entry_point() {
         let (code, out, _) = run_capture(&["--help"]);
         assert_eq!(code, 0);
-        assert!(out.starts_with("usage: poly-pack"));
+        assert!(out.starts_with("usage: unibin-pack"));
         let (code, _, err) = run_capture(&["--nope"]);
         assert_eq!(code, 1);
-        assert!(err.starts_with("poly-pack: unknown argument"));
+        assert!(err.starts_with("unibin-pack: unknown argument"));
     }
 
     #[test]

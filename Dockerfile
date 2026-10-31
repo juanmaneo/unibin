@@ -1,16 +1,16 @@
-# Build/test environment for the poly workspace.
+# Build/test environment for the unibin workspace.
 #
 # Works with Docker, Podman and Buildah (plain Dockerfile syntax only: no
 # BuildKit-specific features, fully-qualified image names):
 #
-#   docker build -t poly-dev .            podman build -t poly-dev .
-#   buildah bud -t poly-dev .
+#   docker build -t unibin-dev .            podman build -t unibin-dev .
+#   buildah bud -t unibin-dev .
 #
-#   podman run --rm -v "$PWD":/src:Z -v poly-target:/src/target poly-dev
-#   podman run --rm -v "$PWD":/src:Z -v poly-target:/src/target poly-dev \
-#       cargo xtask dist -o /src/poly-pack.com     # release polyglot
+#   podman run --rm -v "$PWD":/src:Z -v unibin-target:/src/target unibin-dev
+#   podman run --rm -v "$PWD":/src:Z -v unibin-target:/src/target unibin-dev \
+#       cargo xtask dist -o /src/unibin-pack.com     # release polyglot
 #
-# The default command is `cargo xtask dev-check`. The named `poly-target` volume
+# The default command is `cargo xtask dev-check`. The named `unibin-target` volume
 # keeps the container's build artifacts apart from the host's `target/`.
 # The `:Z` suffix relabels the bind mount for SELinux hosts; drop it if your
 # engine rejects it.
