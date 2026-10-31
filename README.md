@@ -25,7 +25,7 @@ binary built by the normal Rust toolchain for its own target.
 | `poly-core`   | Format library with **zero external dependencies**: stored ZIP writer/reader, manifest, `sh` prologue, PE relocation, slice sniffing, packing, extraction plans |
 | `poly-pack`   | CLI that writes the polyglot |
 | `poly-launch` | The Windows launcher stub embedded as the PE image (pure Rust, std only) |
-| `xtask`       | `fmt`, `clippy`, `test`, `cov`, `all` (the gate includes 100% line coverage) |
+| `xtask`       | `dev-check` pre-push gate (check, fmt, clippy, build, test, coverage with a 100% line gate) and `dist` |
 
 ## File layout
 
@@ -126,7 +126,7 @@ cargo-xwin and the rustup targets. It works with Docker, Podman and Buildah:
 
 ```sh
 podman build -t poly-dev .            # or: docker build / buildah bud
-podman run --rm -v "$PWD":/src:Z -v poly-target:/src/target poly-dev   # cargo xtask all
+podman run --rm -v "$PWD":/src:Z -v poly-target:/src/target poly-dev   # cargo xtask dev-check
 podman run --rm -v "$PWD":/src:Z -v poly-target:/src/target poly-dev \
     cargo xtask dist -o /src/poly-pack.com
 ```
@@ -204,12 +204,18 @@ Appending the ZIP would invalidate any signature, so sign last:
 ## Development
 
 ```sh
-cargo xtask all     # fmt --check, clippy -D warnings, tests, coverage gate
-cargo xtask cov     # just the coverage gate
-cargo xtask dist    # cross-build and pack a release polyglot (needs zigbuild/xwin)
+cargo xtask dev-check   # pre-push gate: check, fmt, clippy, build, test, coverage
+cargo xtask coverage    # just the coverage gate
+cargo xtask dist        # cross-build and pack a release polyglot (needs zigbuild/xwin)
 ```
 
-`cov` builds with `-C instrument-coverage` into `target/cov`, merges the
+Each `dev-check` step is also a task of its own (`cargo xtask check`, `fmt`,
+`clippy`, `build`, `test`). The steps run in that order and stop at the
+first failure. `fmt` only checks formatting, and clippy runs with
+`-D warnings`. `all` and `cov` remain as aliases for `dev-check` and
+`coverage`.
+
+`coverage` builds with `-C instrument-coverage` into `target/cov`, merges the
 profiles with rustup's `llvm-tools` (`rustup component add llvm-tools`), and
 fails unless `llvm-cov report` shows **100% line coverage** for every
 `poly-*/src` file. A successful run ends with:

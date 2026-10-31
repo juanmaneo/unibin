@@ -1,6 +1,9 @@
-//! `cargo xtask <fmt|clippy|test|cov|all|dist>`
+//! `cargo xtask <check|fmt|clippy|build|test|coverage|dev-check|dist>`
 //!
-//! `cov` builds the workspace with `-C instrument-coverage`, runs every test
+//! `dev-check` is the pre-push gate: check, fmt, clippy, build, test and
+//! coverage, in that order, stopping at the first failure (`all` is an alias).
+//!
+//! `coverage` (alias `cov`) builds the workspace with `-C instrument-coverage`, runs every test
 //! (including the binaries spawned by integration tests), merges the
 //! profiles with rustup's `llvm-tools` and fails unless every `poly-*/src`
 //! file reaches 100% line coverage.
@@ -15,23 +18,36 @@ use std::{env, fs};
 
 type Result<T = ()> = std::result::Result<T, String>;
 
-const TASKS: &str = "usage: cargo xtask <fmt|clippy|test|cov|all>
-       cargo xtask dist [-p <package>] [--emu <FEX-static>] [-o <out>]";
+const TASKS: &str = "usage: cargo xtask <check|fmt|clippy|build|test|coverage|dev-check>
+       cargo xtask dist [-p <package>] [--emu <FEX-static>] [-o <out>]
+
+  dev-check   pre-push gate: check, fmt, clippy, build, test, coverage (alias: all)
+  coverage    100% line-coverage gate on poly-* sources (alias: cov)
+  dist        cross-build every slice target and pack a release polyglot";
+
+type Step = (&'static str, fn() -> Result);
+
+/// The pre-push gate, in order.
+const DEV_CHECK: &[Step] = &[
+    ("check", check),
+    ("fmt", fmt),
+    ("clippy", clippy),
+    ("build", build),
+    ("test", test),
+    ("coverage", coverage),
+];
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let task = args.first().map(String::as_str).unwrap_or_default();
     let result = match task {
-        "fmt" => fmt(),
-        "clippy" => clippy(),
-        "test" => test(),
-        "cov" => cov(),
-        "all" => fmt()
-            .and_then(|()| clippy())
-            .and_then(|()| test())
-            .and_then(|()| cov()),
+        "dev-check" | "all" => dev_check(),
+        "cov" => coverage(),
         "dist" => parse_dist(&args[1..]).and_then(|d| dist(&d)),
-        _ => Err(TASKS.to_owned()),
+        _ => match DEV_CHECK.iter().find(|(name, _)| *name == task) {
+            Some((_, step)) => step(),
+            None => Err(TASKS.to_owned()),
+        },
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -75,6 +91,27 @@ fn output(mut cmd: Command) -> Result<String> {
         return Err(format!("{cmd:?} failed with {}", out.status));
     }
     String::from_utf8(out.stdout).map_err(|e| e.to_string())
+}
+
+fn dev_check() -> Result {
+    for (name, step) in DEV_CHECK {
+        eprintln!("xtask: dev-check: {name}");
+        step().map_err(|e| format!("dev-check failed at {name}: {e}"))?;
+    }
+    // `coverage` runs last, so its gate message is the final line.
+    Ok(())
+}
+
+fn check() -> Result {
+    let mut c = cargo();
+    c.args(["check", "--workspace", "--all-targets"]);
+    run(c)
+}
+
+fn build() -> Result {
+    let mut c = cargo();
+    c.args(["build", "--workspace", "--all-targets"]);
+    run(c)
 }
 
 fn fmt() -> Result {
@@ -336,7 +373,7 @@ fn coverage_gate(report: &str, expected: &[String]) -> Vec<(String, String)> {
     problems
 }
 
-fn cov() -> Result {
+fn coverage() -> Result {
     let root = root();
     let bin = llvm_bin()?;
     let target = root.join("target/cov");
@@ -444,6 +481,18 @@ mod tests {
                 .unwrap_err()
                 .contains("unknown argument")
         );
+    }
+
+    #[test]
+    fn dev_check_order() {
+        let names: Vec<&str> = DEV_CHECK.iter().map(|(n, _)| *n).collect();
+        assert_eq!(
+            names,
+            ["check", "fmt", "clippy", "build", "test", "coverage"]
+        );
+        for name in names {
+            assert!(TASKS.contains(name), "{name} missing from usage");
+        }
     }
 
     #[test]

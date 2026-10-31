@@ -10,7 +10,7 @@
 #   podman run --rm -v "$PWD":/src:Z -v poly-target:/src/target poly-dev \
 #       cargo xtask dist -o /src/poly-pack.com     # release polyglot
 #
-# The default command is `cargo xtask all`. The named `poly-target` volume
+# The default command is `cargo xtask dev-check`. The named `poly-target` volume
 # keeps the container's build artifacts apart from the host's `target/`.
 # The `:Z` suffix relabels the bind mount for SELinux hosts; drop it if your
 # engine rejects it.
@@ -66,4 +66,4 @@ ENV XWIN_ACCEPT_LICENSE=1 \
     ZIG_GLOBAL_CACHE_DIR=/src/target/zig-cache
 
 WORKDIR /src
-CMD ["cargo", "xtask", "all"]
+CMD ["cargo", "xtask", "dev-check"]
