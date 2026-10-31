@@ -1,0 +1,10 @@
+[package]
+name = "poly-pack"
+description = "Pack native executables into one polyglot file (sh + PE + ZIP)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+poly-core = { path = "../poly-core" }

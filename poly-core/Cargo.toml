@@ -1,0 +1,11 @@
+[package]
+name = "poly-core"
+description = "Container format for single-file, multi-OS, multi-arch executables"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Deliberately no dependencies: this crate is linked into the Windows launcher
+# stub and must stay small and auditable.
+[dependencies]

@@ -1,0 +1,10 @@
+[package]
+name = "poly-launch"
+description = "Launcher stub embedded as the PE image of a polyglot executable"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+poly-core = { path = "../poly-core" }
