@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "hwprobe"
+version = "0.1.0"
+dependencies = [
+ "unibin-core",
+]
+
+[[package]]
 name = "unibin-core"
 version = "0.1.0"
 

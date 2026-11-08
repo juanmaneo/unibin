@@ -11,6 +11,10 @@
 //! `dist` cross-builds one binary package for every slice target with
 //! cargo-zigbuild / cargo-xwin and packs the slices into a single polyglot
 //! file with `unibin-pack`.
+//!
+//! `hwkit` builds the hardware-test kit: the `hwprobe` payload packed twice
+//! (every slice, and x86_64 slices only to exercise the Rosetta, Prism and
+//! `--emu` fallbacks) next to the `hwtest/` scripts.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -20,10 +24,12 @@ type Result<T = ()> = std::result::Result<T, String>;
 
 const TASKS: &str = "usage: cargo xtask <check|fmt|clippy|build|test|coverage|dev-check>
        cargo xtask dist [-p <package>] [--emu <x86_64-emulator>] [-o <out>]
+       cargo xtask hwkit [--emu <x86_64-emulator>] [-o <dir>]
 
   dev-check   pre-push gate: check, fmt, clippy, build, test, coverage (alias: all)
   coverage    100% line-coverage gate on unibin-* sources (alias: cov)
-  dist        cross-build every slice target and pack a release polyglot";
+  dist        cross-build every slice target and pack a release polyglot
+  hwkit       build the hardware-test kit (default dir: target/hwkit)";
 
 type Step = (&'static str, fn() -> Result);
 
@@ -44,6 +50,7 @@ fn main() -> ExitCode {
         "dev-check" | "all" => dev_check(),
         "cov" => coverage(),
         "dist" => parse_dist(&args[1..]).and_then(|d| dist(&d)),
+        "hwkit" => parse_hwkit(&args[1..]).and_then(|d| hwkit(&d)),
         _ => match DEV_CHECK.iter().find(|(name, _)| *name == task) {
             Some((_, step)) => step(),
             None => Err(TASKS.to_owned()),
@@ -235,7 +242,7 @@ fn cross_build(dir: &Path, target: &str, package: &str) -> Result<PathBuf> {
     Ok(artifact(dir, target, package))
 }
 
-fn dist(d: &Dist) -> Result {
+fn require_cross_tools() -> Result {
     for tool in ["zigbuild", "xwin"] {
         let mut c = cargo();
         c.args([tool, "--help"])
@@ -248,30 +255,92 @@ fn dist(d: &Dist) -> Result {
             format!("`cargo {tool}` is unavailable: install cargo-{tool}, or run in the Dockerfile image (see README)")
         })?;
     }
+    Ok(())
+}
+
+fn cross_build_all(dir: &Path, targets: &[&str], package: &str) -> Result<Vec<PathBuf>> {
+    targets
+        .iter()
+        .map(|t| cross_build(dir, t, package))
+        .collect()
+}
+
+/// Run the workspace's own `unibin-pack` (release build under `dir`).
+fn pack(dir: &Path, launcher: &Path, slices: &[PathBuf], emu: Option<&Path>, out: &Path) -> Result {
+    let mut pack = cargo();
+    pack.env("CARGO_TARGET_DIR", dir)
+        .args(["run", "-q", "--release", "-p", "unibin-pack", "--"])
+        .arg("--launcher")
+        .arg(launcher);
+    for slice in slices {
+        pack.arg("--slice").arg(slice);
+    }
+    if let Some(emu) = emu {
+        pack.arg("--emu").arg(emu);
+    }
+    pack.arg("-o").arg(out);
+    run(pack)
+}
+
+fn dist(d: &Dist) -> Result {
+    require_cross_tools()?;
     let dir = root().join("target/dist");
     let launcher = cross_build(&dir, WINDOWS_TARGET, "unibin-launch")?;
-    let slices = DIST_TARGETS
-        .iter()
-        .map(|t| cross_build(&dir, t, &d.package))
-        .collect::<Result<Vec<_>>>()?;
+    let slices = cross_build_all(&dir, DIST_TARGETS, &d.package)?;
     let out = d
         .out
         .clone()
         .unwrap_or_else(|| dir.join(format!("{}.com", d.package)));
+    pack(&dir, &launcher, &slices, d.emu.as_deref(), &out)
+}
 
-    let mut pack = cargo();
-    pack.env("CARGO_TARGET_DIR", &dir)
-        .args(["run", "-q", "--release", "-p", "unibin-pack", "--"])
-        .arg("--launcher")
-        .arg(launcher);
-    for slice in &slices {
-        pack.arg("--slice").arg(slice);
+const HWKIT_PACKAGE: &str = "hwprobe";
+/// x86_64 slices only. On arm64 hosts they exercise each OS's fallback:
+/// Rosetta, Prism and `--emu`. macOS needs a thin x86_64 Mach-O, because the
+/// kernel would run the arm64 half of a fat one natively.
+const HWKIT_X86_64_TARGETS: &[&str] = &[
+    "x86_64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-freebsd",
+    WINDOWS_TARGET,
+];
+/// Copied from `hwtest/` into the kit.
+const HWKIT_FILES: &[&str] = &["README.md", "run.sh", "run.ps1"];
+
+/// `hwkit` takes `dist`'s `--emu` and `-o` (a directory), but no package.
+fn parse_hwkit(args: &[String]) -> Result<Dist> {
+    let d = parse_dist(args)?;
+    if d.package != "unibin-pack" {
+        return Err(format!("hwkit always packs {HWKIT_PACKAGE}\n{TASKS}"));
     }
-    if let Some(emu) = &d.emu {
-        pack.arg("--emu").arg(emu);
+    Ok(d)
+}
+
+fn hwkit(d: &Dist) -> Result {
+    require_cross_tools()?;
+    let root = root();
+    let dir = root.join("target/dist");
+    let out = d.out.clone().unwrap_or_else(|| root.join("target/hwkit"));
+    fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let launcher = cross_build(&dir, WINDOWS_TARGET, "unibin-launch")?;
+
+    let all = cross_build_all(&dir, DIST_TARGETS, HWKIT_PACKAGE)?;
+    pack(&dir, &launcher, &all, None, &out.join("probe.com"))?;
+    let x86_64 = cross_build_all(&dir, HWKIT_X86_64_TARGETS, HWKIT_PACKAGE)?;
+    if d.emu.is_none() {
+        eprintln!(
+            "xtask: hwkit: no --emu, so Linux-aarch64 hosts check the no-slice error instead of the emulator"
+        );
     }
-    pack.arg("-o").arg(&out);
-    run(pack)
+    let fallback = out.join("probe-x86_64.com");
+    pack(&dir, &launcher, &x86_64, d.emu.as_deref(), &fallback)?;
+
+    for file in HWKIT_FILES {
+        let (from, to) = (root.join("hwtest").join(file), out.join(file));
+        fs::copy(&from, &to).map_err(|e| format!("{}: {e}", from.display()))?;
+    }
+    eprintln!("xtask: hwkit ready in {}", out.display());
+    Ok(())
 }
 
 /// Directory holding rustup's `llvm-tools` for the active toolchain.
@@ -499,6 +568,27 @@ mod tests {
                 .unwrap_err()
                 .contains("unknown argument")
         );
+    }
+
+    #[test]
+    fn hwkit_arguments() {
+        let d = parse_hwkit(&args(&["--emu", "/x/qemu", "-o", "/kit"])).unwrap();
+        assert_eq!(d.emu.as_deref(), Some(Path::new("/x/qemu")));
+        assert_eq!(d.out.as_deref(), Some(Path::new("/kit")));
+        assert!(
+            parse_hwkit(&args(&["-p", "x"]))
+                .unwrap_err()
+                .contains("always packs")
+        );
+        // Every fallback slice is x86_64, and the kit ships every script.
+        assert!(
+            HWKIT_X86_64_TARGETS
+                .iter()
+                .all(|t| t.starts_with("x86_64-"))
+        );
+        for file in HWKIT_FILES {
+            assert!(root().join("hwtest").join(file).is_file(), "{file}");
+        }
     }
 
     #[test]

@@ -27,7 +27,8 @@ binary built by the normal Rust toolchain for its own target.
 | `unibin-core`   | Format library with **zero external dependencies**: stored ZIP writer/reader, manifest, `sh` prologue, PE relocation, slice sniffing, packing, extraction plans |
 | `unibin-pack`   | CLI that writes the polyglot |
 | `unibin-launch` | The Windows launcher stub embedded as the PE image (pure Rust, std only) |
-| `xtask`       | `dev-check` pre-push gate (check, fmt, clippy, build, test, coverage with a 100% line gate) and `dist` |
+| `xtask`       | `dev-check` pre-push gate (check, fmt, clippy, build, test, coverage with a 100% line gate), `dist` and `hwkit` |
+| `hwprobe` (`hwtest/probe`) | Payload of the [hardware-test kit](hwtest/README.md): reports which slice ran and what it received |
 
 ## File layout
 
@@ -229,6 +230,7 @@ Appending the ZIP would invalidate any signature, so sign last:
 cargo xtask dev-check   # pre-push gate: check, fmt, clippy, build, test, coverage
 cargo xtask coverage    # just the coverage gate
 cargo xtask dist        # cross-build and pack a release polyglot (needs zigbuild/xwin)
+cargo xtask hwkit       # build the hardware-test kit in target/hwkit (see hwtest/README.md)
 ```
 
 Each `dev-check` step is also a task of its own (`cargo xtask check`, `fmt`,

@@ -1,0 +1,10 @@
+[package]
+name = "hwprobe"
+description = "Hardware-test payload: reports which slice of a packed file ran and what it received"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+unibin-core = { path = "../../unibin-core" }

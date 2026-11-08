@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["unibin-core", "unibin-pack", "unibin-launch", "xtask"]
+members = ["unibin-core", "unibin-pack", "unibin-launch", "hwtest/probe", "xtask"]
 
 [workspace.package]
 version = "0.1.0"
