@@ -218,6 +218,21 @@ fn real_static_binary_runs_through_shells() {
     );
     wait_for_cleanup(&dir);
 
+    // `sh app` from its own directory: $0 is slash-less but not on $PATH.
+    let o = Command::new("sh")
+        .arg("app")
+        .current_dir(&dir)
+        .env("TMPDIR", dir.join("tmp"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        stdout(&o),
+        format!("{MARKER}\n"),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    wait_for_cleanup(&dir);
+
     // The file is also a valid ZIP for standard tools.
     if let Ok(o) = Command::new("unzip")
         .arg("-p")

@@ -30,7 +30,7 @@ const EOCD_WIDTH: usize = 20; // u64::MAX has 20 digits
 
 const SCRIPT: &str = r#"# unibin: one file, many OSes. Re-sign only after packing.
 o=$0
-case $o in */*) ;; *) o=$(command -v "$o") || exit 127 ;; esac
+case $o in */*) ;; *) [ -f "$o" ] && o=./$o || o=$(command -v "$o") || exit 127 ;; esac
 e=@EOCD@
 z() { tail -c +$(($1+1)) "$o" | head -c $2; }
 u() { echo $(($1+256*$2)); }

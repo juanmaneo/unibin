@@ -80,7 +80,9 @@ keys can share one span; a fat Mach-O serves both Darwin keys.
 The prologue is plain POSIX `sh` and uses only `tail`, `head`, `od`, `sed`,
 `mktemp`, `uname`, `chmod` and `kill`. It does this:
 
-1. Resolves `$0`, using `command -v` when the program was found through `$PATH`.
+1. Resolves `$0`: a slash-less name is a file in the current directory
+   (`sh app`) or, failing that, is looked up with `command -v` (found
+   through `$PATH`).
 2. Checks for the `PK\5\6` signature at the EOCD offset. That offset is
    **baked into the script** at pack time (`e=…`) instead of being read from
    the last 22 bytes, so the file still works after Authenticode signing
