@@ -11,7 +11,7 @@ fn main() {
     let code = launch::run_main_with(
         std::env::current_exe(),
         std::env::args_os().skip(1).collect(),
-        &unibin_core::extract::current_host(),
+        &launch::host(),
         &std::env::temp_dir(),
         &mut std::io::stderr(),
     );

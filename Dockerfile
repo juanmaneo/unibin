@@ -9,6 +9,7 @@
 #   podman run --rm -v "$PWD":/src:Z -v unibin-target:/src/target unibin-dev
 #   podman run --rm -v "$PWD":/src:Z -v unibin-target:/src/target unibin-dev \
 #       cargo xtask dist -o /src/unibin-pack.com     # release polyglot
+#   ... cargo xtask dist --emu "$UNIBIN_EMU" -o ...  # + x86_64 emulator for arm64 Linux
 #
 # The default command is `cargo xtask dev-check`. The named `unibin-target` volume
 # keeps the container's build artifacts apart from the host's `target/`.
@@ -47,13 +48,35 @@ RUN set -eu; \
     ln -s /opt/zig/zig /usr/local/bin/zig; \
     zig version
 
-# Slice targets (aarch64-unknown-freebsd has no prebuilt std; see README).
+# Slice targets. aarch64-unknown-freebsd has no prebuilt std: `dist` builds
+# it with -Zbuild-std on this pinned nightly (keep in sync with
+# BUILD_STD_TOOLCHAIN in xtask/src/main.rs).
+ARG BUILD_STD_TOOLCHAIN=nightly-2026-11-08
 RUN rustup component add clippy rustfmt llvm-tools \
  && rustup target add \
       x86_64-unknown-linux-musl aarch64-unknown-linux-musl \
       x86_64-apple-darwin aarch64-apple-darwin \
       x86_64-unknown-freebsd \
-      x86_64-pc-windows-msvc aarch64-pc-windows-msvc
+      x86_64-pc-windows-msvc aarch64-pc-windows-msvc \
+ && rustup toolchain install "$BUILD_STD_TOOLCHAIN" --profile minimal --component rust-src
+
+# x86_64 emulator for Linux/arm64 hosts (`--emu`): the static-pie
+# qemu-x86_64 from Debian's qemu-user arm64 package (GPL-2.0), pinned by
+# snapshot.debian.org hash. FEX is faster, but it has no static build and
+# needs a FEXServer next to it, so it cannot be a single --emu file.
+ARG QEMU_DEB=qemu-user_10.0.13+ds-0+deb13u1_arm64.deb
+ARG QEMU_DEB_SHA1=02b553a4532192bc999d15408d1e56d7b254906f
+ARG QEMU_DEB_SHA256=c73711af02b97cd5e2667e735d9c06890c57165517110ca4e646c95a7083158d
+ARG QEMU_X86_64_SHA256=9af86352fd463ad9ec25bdd6a4b891ac6b6a7f3d46a7db3da6f23e2c09094a59
+RUN set -eu; \
+    curl -fsSLo /tmp/qemu.deb "https://snapshot.debian.org/file/$QEMU_DEB_SHA1/$QEMU_DEB"; \
+    echo "$QEMU_DEB_SHA256  /tmp/qemu.deb" | sha256sum -c -; \
+    mkdir -p /opt/emu; \
+    dpkg-deb --fsys-tarfile /tmp/qemu.deb | tar -xO ./usr/bin/qemu-x86_64 > /opt/emu/qemu-x86_64; \
+    echo "$QEMU_X86_64_SHA256  /opt/emu/qemu-x86_64" | sha256sum -c -; \
+    chmod 755 /opt/emu/qemu-x86_64; \
+    rm /tmp/qemu.deb
+ENV UNIBIN_EMU=/opt/emu/qemu-x86_64
 
 RUN cargo install --locked cargo-zigbuild cargo-xwin \
  && rm -rf "$CARGO_HOME/registry" "$CARGO_HOME/git"

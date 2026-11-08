@@ -19,7 +19,7 @@ use std::{env, fs};
 type Result<T = ()> = std::result::Result<T, String>;
 
 const TASKS: &str = "usage: cargo xtask <check|fmt|clippy|build|test|coverage|dev-check>
-       cargo xtask dist [-p <package>] [--emu <FEX-static>] [-o <out>]
+       cargo xtask dist [-p <package>] [--emu <x86_64-emulator>] [-o <out>]
 
   dev-check   pre-push gate: check, fmt, clippy, build, test, coverage (alias: all)
   coverage    100% line-coverage gate on unibin-* sources (alias: cov)
@@ -140,15 +140,22 @@ fn test() -> Result {
 }
 
 /// Slice targets built by `dist`. cargo-zigbuild merges `universal2-apple-darwin`
-/// into one fat Mach-O; the Windows target is also the launcher's.
+/// into one fat Mach-O; the x86_64 Windows target is also the launcher's,
+/// which picks the arm64 slice natively on Windows on Arm.
 const DIST_TARGETS: &[&str] = &[
     "x86_64-unknown-linux-musl",
     "aarch64-unknown-linux-musl",
     "universal2-apple-darwin",
     "x86_64-unknown-freebsd",
     WINDOWS_TARGET,
+    "aarch64-pc-windows-msvc",
+    BUILD_STD_TARGET,
 ];
 const WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
+/// No prebuilt std ships for this target, so it is built with `-Zbuild-std`
+/// on a pinned nightly (needs its `rust-src` component and network access).
+const BUILD_STD_TARGET: &str = "aarch64-unknown-freebsd";
+const BUILD_STD_TOOLCHAIN: &str = "nightly-2026-11-08";
 
 #[derive(Debug, PartialEq, Eq)]
 struct Dist {
@@ -197,7 +204,14 @@ fn artifact(dir: &Path, target: &str, bin: &str) -> PathBuf {
 }
 
 fn cross_build(dir: &Path, target: &str, package: &str) -> Result<PathBuf> {
-    let mut c = cargo();
+    let mut c = if target == BUILD_STD_TARGET {
+        let mut c = Command::new("rustup");
+        c.current_dir(root())
+            .args(["run", BUILD_STD_TOOLCHAIN, "cargo"]);
+        c
+    } else {
+        cargo()
+    };
     c.env("CARGO_TARGET_DIR", dir);
     if target.contains("-windows-") {
         c.args(["xwin", "build"]);
@@ -213,6 +227,10 @@ fn cross_build(dir: &Path, target: &str, package: &str) -> Result<PathBuf> {
         "--target",
         target,
     ]);
+    if target == BUILD_STD_TARGET {
+        // The release profile uses panic = "abort".
+        c.arg("-Zbuild-std=std,panic_abort");
+    }
     run(c)?;
     Ok(artifact(dir, target, package))
 }
@@ -505,6 +523,10 @@ mod tests {
         assert_eq!(
             artifact(d, "universal2-apple-darwin", "app"),
             Path::new("/t/universal2-apple-darwin/release/app")
+        );
+        assert_eq!(
+            artifact(d, "aarch64-pc-windows-msvc", "app"),
+            Path::new("/t/aarch64-pc-windows-msvc/release/app.exe")
         );
         assert!(DIST_TARGETS.contains(&WINDOWS_TARGET));
     }

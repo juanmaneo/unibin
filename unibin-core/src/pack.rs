@@ -45,7 +45,7 @@ pub struct Input {
     /// x86_64 PE32+ launcher stub (`unibin-launch.exe`), unsigned.
     pub launcher: Vec<u8>,
     pub slices: Vec<Slice>,
-    /// Static Linux/aarch64 x86_64 emulator (FEX), run when no native
+    /// Static Linux/aarch64 x86_64 emulator (e.g. qemu-x86_64), run when no native
     /// `Linux-aarch64` slice exists.
     pub emu: Option<Vec<u8>>,
 }

@@ -33,13 +33,25 @@ pub fn current_host() -> String {
     host_key(std::env::consts::OS, std::env::consts::ARCH)
 }
 
+/// Key for a Windows host whose native machine is the PE machine code
+/// `machine`, as `IsWow64Process2` reports it. An x86_64 process running
+/// under Prism on Windows on Arm still sees `consts::ARCH == "x86_64"`.
+pub fn windows_host(machine: u16) -> String {
+    let arch = if machine == pe::MACHINE_ARM64 {
+        "aarch64"
+    } else {
+        "x86_64"
+    };
+    host_key("windows", arch)
+}
+
 /// How to run the packed program on a given host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Plan {
     /// Run the slice directly. `key` may differ from the host when the OS
     /// translates transparently (Rosetta 2, Windows Prism).
     Native { key: String, slice: Span },
-    /// Run `emu <slice> args...` (FEX on Linux/aarch64).
+    /// Run `emu <slice> args...` (the bundled emulator on Linux/aarch64).
     Emulated { key: String, slice: Span, emu: Span },
 }
 
@@ -206,6 +218,8 @@ mod tests {
         assert_eq!(host_key("windows", "x64"), "Windows-x86_64");
         assert_eq!(host_key("Darwin", "arm64"), "Darwin-aarch64");
         assert!(current_host().contains('-'));
+        assert_eq!(windows_host(pe::MACHINE_ARM64), "Windows-aarch64");
+        assert_eq!(windows_host(pe::MACHINE_AMD64), "Windows-x86_64");
     }
 
     #[test]
@@ -235,6 +249,15 @@ mod tests {
         // A native slice beats the emulator.
         let both = manifest(&["Linux-x86_64", "Linux-aarch64"], true);
         assert_eq!(plan(&both, "Linux-aarch64"), Ok(native("Linux-aarch64", 1)));
+        let win = manifest(&["Windows-x86_64", "Windows-aarch64"], false);
+        assert_eq!(
+            plan(&win, "Windows-aarch64"),
+            Ok(native("Windows-aarch64", 1))
+        );
+        assert_eq!(
+            plan(&win, "Windows-x86_64"),
+            Ok(native("Windows-x86_64", 0))
+        );
         // No emulator, or emulator but no x86_64 slice.
         assert!(plan(&manifest(&["Linux-x86_64"], false), "Linux-aarch64").is_err());
         assert!(plan(&manifest(&["Darwin-x86_64"], true), "Linux-aarch64").is_err());

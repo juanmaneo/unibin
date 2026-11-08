@@ -7,13 +7,13 @@ use unibin_core::pack::{Input, Slice, pack};
 use unibin_core::{Error, Result};
 
 const USAGE: &str = "\
-usage: unibin-pack --launcher <unibin-launch.exe> --slice <file>[=OS-arch]... [--emu <FEX-static>] -o <out>
+usage: unibin-pack --launcher <unibin-launch.exe> --slice <file>[=OS-arch]... [--emu <x86_64-emulator>] -o <out>
 
   --launcher <pe>       unsigned x86_64 Windows launcher stub (unibin-launch.exe)
   --slice <file>[=KEY]  native executable; KEY (e.g. Linux-x86_64) is detected from
                         the file and, if given, must match it. Repeatable.
-  --emu <file>          static Linux-aarch64 x86_64 emulator (FEX), used on
-                        Linux/aarch64 hosts when there is no Linux-aarch64 slice
+  --emu <file>          static Linux-aarch64 x86_64 emulator (e.g. qemu-x86_64), used
+                        on Linux/aarch64 hosts when there is no Linux-aarch64 slice
   -o, --output <out>    output file (written with mode 0755)
 
 Sign the output (signtool) only after packing.";

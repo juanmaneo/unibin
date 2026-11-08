@@ -15,10 +15,10 @@ binary built by the normal Rust toolchain for its own target.
 | Host                | What runs                                                     |
 |---------------------|---------------------------------------------------------------|
 | Linux x86_64/arm64  | `Linux-<arch>` static musl slice, via the `sh` prologue       |
-| Linux arm64, no slice | `Linux-x86_64` slice under the embedded FEX emulator (`--emu`) |
-| FreeBSD x86_64      | `FreeBSD-x86_64` slice, via the `sh` prologue                 |
+| Linux arm64, no slice | `Linux-x86_64` slice under the embedded emulator (`--emu`)  |
+| FreeBSD x86_64/arm64 | `FreeBSD-<arch>` slice, via the `sh` prologue                |
 | macOS x86_64/arm64  | fat Mach-O slice; arm64 falls back to x86_64 under Rosetta    |
-| Windows x64/arm64   | PE launcher stub → `Windows-x86_64` slice (Prism on arm64)    |
+| Windows x64/arm64   | PE launcher stub → `Windows-<arch>` slice; arm64 falls back to x86_64 under Prism |
 
 ## Workspace
 
@@ -104,7 +104,8 @@ unibin-pack --launcher unibin-launch.exe \
           --slice app-macos-universal \
           --slice app-freebsd-x86_64 \
           --slice app.exe \
-          [--emu FEXInterpreter-static] \
+          --slice app-arm64.exe \
+          [--emu qemu-x86_64] \
           -o app
 ```
 
@@ -117,23 +118,31 @@ ELF or has no `Linux-x86_64` slice to run. The output is written with mode
 0755 and is byte-for-byte reproducible.
 
 `unibin-launch` must be the **unsigned x86_64** build. On Windows it opens its
-own image and reads the manifest. It then extracts `Windows-x86_64` to
-`%TEMP%`, runs it with the same arguments, waits, and returns its exit code.
-Ctrl-C is left to the child. The temp directory is removed afterwards.
+own image and reads the manifest. It asks `IsWow64Process2` for the native
+machine, because under Prism an x86_64 process cannot tell from its own
+build. It then extracts `Windows-aarch64` on Windows on Arm, or
+`Windows-x86_64` otherwise (and as the Prism fallback), to `%TEMP%`, runs it
+with the same arguments, waits, and returns its exit code. Ctrl-C is left
+to the child. The temp directory is removed afterwards.
 
 ## Building slices (from one Linux host)
 
 The [`Dockerfile`](Dockerfile) sets up everything below: zig, cargo-zigbuild,
-cargo-xwin and the rustup targets. It works with Docker, Podman and Buildah:
+cargo-xwin, the rustup targets, a pinned nightly for `-Zbuild-std` and a
+pinned static `qemu-x86_64` for `--emu` (at `$UNIBIN_EMU`). It works with
+Docker, Podman and Buildah:
 
 ```sh
 podman build -t unibin-dev .            # or: docker build / buildah bud
 podman run --rm -v "$PWD":/src:Z -v unibin-target:/src/target unibin-dev   # cargo xtask dev-check
 podman run --rm -v "$PWD":/src:Z -v unibin-target:/src/target unibin-dev \
     cargo xtask dist -o /src/unibin-pack.com
+# with the emulator (only useful for packages without a Linux-aarch64 slice):
+podman run --rm -v "$PWD":/src:Z -v unibin-target:/src/target unibin-dev \
+    sh -c 'cargo xtask dist --emu "$UNIBIN_EMU" -o /src/app.com'
 ```
 
-`cargo xtask dist [-p <package>] [--emu <FEX-static>] [-o <out>]` does the
+`cargo xtask dist [-p <package>] [--emu <x86_64-emulator>] [-o <out>]` does the
 whole release: it builds the `unibin-launch` stub and the package's
 same-named binary for every target below, then runs `unibin-pack` on the
 results. The default package is `unibin-pack` and the default output is
@@ -151,8 +160,12 @@ cargo zigbuild --release --target aarch64-unknown-linux-musl
 cargo zigbuild --release --target universal2-apple-darwin
 # FreeBSD: zig's libc floor is FreeBSD 14
 cargo zigbuild --release --target x86_64-unknown-freebsd
+# FreeBSD arm64: no prebuilt std, so build it on a pinned nightly (needs rust-src)
+cargo +nightly-2026-11-08 zigbuild --release --target aarch64-unknown-freebsd \
+    -Zbuild-std=std,panic_abort
 # Windows: MSVC ABI, CRT/SDK fetched by cargo-xwin
 cargo xwin build --release --target x86_64-pc-windows-msvc
+cargo xwin build --release --target aarch64-pc-windows-msvc
 cargo xwin build --release -p unibin-launch --target x86_64-pc-windows-msvc
 ```
 
@@ -168,12 +181,17 @@ Notes:
   [`fat-macho`](https://crates.io/crates/fat-macho) crate (cargo-zigbuild uses
   it internally).
 - rustc's macOS floors are **10.12 on x86_64 and 11.0 on arm64**.
-- `aarch64-unknown-freebsd` has no prebuilt std, so there is no
-  `FreeBSD-aarch64` slice without `-Zbuild-std`.
-- **Emulator:** pass a static FEX build (`FEXInterpreter`, MIT) as `--emu`.
-  FEX needs a 4 KiB-page kernel; on 16 KiB-page Asahi Linux run it inside
-  [muvm](https://github.com/AsahiLinux/muvm). macOS arm64 uses Rosetta, and
-  Windows on Arm uses Prism, so neither needs `--emu`.
+- `aarch64-unknown-freebsd` has no prebuilt std. `dist` builds it with
+  `-Zbuild-std` on `nightly-2026-11-08` (`BUILD_STD_TOOLCHAIN` in
+  `xtask/src/main.rs`, mirrored in the Dockerfile). The first build needs
+  network access to fetch std's crates.io dependencies.
+- **Emulator:** `--emu` takes any *static* Linux-aarch64 program that runs
+  `emu <x86_64-program> args…`. The Dockerfile pins `qemu-x86_64` from
+  Debian's `qemu-user` arm64 package (static-pie, GPL-2.0, ~14 MB), checked
+  by SHA-256. FEX is faster, but upstream has no static build, and (as of
+  FEX-2611) its loader also starts a separate `FEXServer` binary and aborts
+  without one, so it cannot be a single `--emu` file. macOS arm64 uses
+  Rosetta, and Windows on Arm uses Prism, so neither needs `--emu`.
 
 ## Signing: always *after* packing
 
@@ -251,10 +269,7 @@ The end-to-end tests:
 
 ## Known limitations
 
-- The launcher always picks `Windows-x86_64`. Choosing a native
-  `Windows-aarch64` slice under Prism would need `IsWow64Process2`.
-- No `FreeBSD-aarch64` slice; see above.
-- FEX is C++ and stays behind an exec boundary. It would be replaced only by
+- The emulator stays behind an exec boundary. It would be replaced only by
   a pure-Rust x86→arm64 JIT that matches it on a differential benchmark
   corpus.
 - `rusty_alloc` is not wired in; `unibin-core` deliberately has no
@@ -263,9 +278,11 @@ The end-to-end tests:
 ## License
 
 [ISC](LICENSE), the license Cosmopolitan libc uses. No Cosmopolitan code is
-included; unibin reimplements the ideas in Rust from scratch. A FEX binary
-passed with `--emu` stays under its own license (MIT) and is not part of
-this repository.
+included; unibin reimplements the ideas in Rust from scratch. An emulator
+passed with `--emu` stays under its own license (`qemu-x86_64`: GPL-2.0) and
+is not part of this repository. Shipping a packed file that embeds it means
+meeting that license, for example by pointing to the pinned Debian source
+package.
 
 ## Acknowledgements
 

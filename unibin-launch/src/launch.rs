@@ -63,6 +63,37 @@ pub fn run_main_with(
     })
 }
 
+/// Manifest key of this machine. The launcher is always the x86_64 build,
+/// so under Prism on Windows on Arm the compiled-in arch is wrong; ask the
+/// OS for the native machine so a `Windows-aarch64` slice runs natively
+/// (`plan` still falls back to `Windows-x86_64` when there is none).
+#[cfg(windows)]
+pub fn host() -> String {
+    use std::ffi::c_void;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> *mut c_void;
+        fn IsWow64Process2(
+            process: *mut c_void,
+            process_machine: *mut u16,
+            native: *mut u16,
+        ) -> i32;
+    }
+    let (mut process, mut native) = (0u16, 0u16);
+    // SAFETY: the current-process pseudo-handle and two valid out-pointers.
+    let ok = unsafe { IsWow64Process2(GetCurrentProcess(), &mut process, &mut native) };
+    if ok != 0 {
+        unibin_core::extract::windows_host(native)
+    } else {
+        unibin_core::extract::current_host()
+    }
+}
+
+#[cfg(not(windows))]
+pub fn host() -> String {
+    unibin_core::extract::current_host()
+}
+
 /// Ctrl-C is delivered to every process on the console. Swallow it here so
 /// the launcher outlives the child (which decides how to react) and can
 /// still clean up and forward the exit code. A handler, unlike
