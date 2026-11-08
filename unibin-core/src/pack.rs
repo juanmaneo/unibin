@@ -1,7 +1,7 @@
 //! Assemble prologue + relocated PE launcher + ZIP of slices + manifest.
 
 use crate::manifest::{Manifest, check_key};
-use crate::zip::{EOCD_LEN, ZipWriter};
+use crate::zip::{EOCD_LEN, ZIP32_MAX, ZipWriter};
 use crate::{Error, Result, pe, prologue, sniff};
 
 /// Host on which the bundled emulator runs the `Linux-x86_64` slice.
@@ -77,12 +77,17 @@ fn check_input(input: &Input) -> Result<()> {
 
 /// Produce the polyglot file.
 pub fn pack(input: &Input) -> Result<Vec<u8>> {
+    pack_within(input, ZIP32_MAX)
+}
+
+/// [`pack`], with every ZIP offset and size capped at `limit`.
+fn pack_within(input: &Input, limit: u64) -> Result<Vec<u8>> {
     check_input(input)?;
     let launcher = pe::relocate(&input.launcher, prologue::len())?;
     let mut prefix = vec![0u8; launcher.shift];
     prefix.extend_from_slice(&launcher.image);
 
-    let mut zip = ZipWriter::new(prefix);
+    let mut zip = ZipWriter::with_limit(prefix, limit);
     let mut manifest = Manifest::default();
     for slice in &input.slices {
         let span = zip.add(&slice.keys.join("+"), &slice.data)?;
@@ -253,6 +258,35 @@ mod tests {
         assert!(pack_err(|i| drop(i.slices.remove(0))).contains("needs a Linux-x86_64"));
         assert!(pack_err(|i| i.launcher = fake_pe(MACHINE_ARM64)).contains("must be x86_64"));
         assert!(pack_err(|i| i.launcher = b"MZ".to_vec()).contains("not a PE"));
+    }
+
+    #[test]
+    fn archive_too_large() {
+        let input = full_input();
+        let good = pack(&input).unwrap();
+        let a = Archive::open(&good).unwrap();
+        let emu_header = a.manifest.emu.unwrap().1.off - 30 - "emu-Linux-aarch64".len() as u64;
+        let cd_offset = crate::zip::find_eocd(&good).unwrap().cd_offset;
+        for (limit, what) in [
+            (0x100, "local header offset"),
+            (emu_header - 1, "local header offset"),
+            (u64::from(cd_offset) - 1, "central directory offset"),
+        ] {
+            let e = pack_within(&input, limit).unwrap_err();
+            assert!(e.0.contains(what), "{limit}: {e}");
+        }
+    }
+
+    #[test]
+    fn relocated_lfanew_with_a_newline_byte() {
+        // NT headers at 0x0A land at 0x60A after the 0x600-byte prologue,
+        // and 0x0A in e_lfanew would end the shell comment hiding it.
+        let mut pe = fake_pe(MACHINE_AMD64);
+        pe.copy_within(0x80..0x1E0, 0x0A);
+        pe[0x16A..0x200].fill(0);
+        crate::put32(&mut pe, 0x3C, 0x0A);
+        assert_eq!(pe::nt_headers(&pe), Some((0x0A, MACHINE_AMD64)));
+        assert!(pack_err(|i| i.launcher = pe).contains("newline byte"));
     }
 
     #[test]

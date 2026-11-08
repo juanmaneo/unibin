@@ -46,15 +46,13 @@ fn has_freebsd_note(b: &[u8]) -> bool {
     })
 }
 
+/// The note segment of the program header at `ph`, whose type field has
+/// been read (so `ph + 56` cannot overflow), and its note alignment.
 fn note_segment(b: &[u8], ph: usize) -> Option<(&[u8], usize)> {
-    let off = le64(b, ph.checked_add(8)?)? as usize;
-    let len = le64(b, ph.checked_add(32)?)? as usize;
-    let align = if le64(b, ph.checked_add(48)?)? == 8 {
-        8
-    } else {
-        4
-    };
-    Some((b.get(off..off.checked_add(len)?)?, align))
+    let phdr = b.get(ph..ph + 56)?;
+    let field = |at| le64(phdr, at).unwrap_or(0) as usize;
+    let align = if field(48) == 8 { 8 } else { 4 };
+    Some((b.get(field(8)..)?.get(..field(32))?, align))
 }
 
 fn freebsd_tag((mut n, align): (&[u8], usize)) -> bool {
@@ -244,10 +242,16 @@ pub(crate) mod tests {
         assert_eq!(noted(4, &note(b"FreeBSD\0", 4, &[0; 4], 4)), "Linux-x86_64");
         assert_eq!(noted(4, &freebsd_notes(4)[..40]), "Linux-x86_64");
         assert_eq!(noted(4, &[]), "Linux-x86_64");
-        // A note segment outside the file, or program headers past EOF.
+        // A note segment running past EOF or starting beyond it, a program
+        // header cut short by EOF, or program headers past EOF.
         let mut b = fake_noted_elf(EM_X86_64, 4, &freebsd_notes(4));
         b[64 + 32..64 + 40].copy_from_slice(&u64::MAX.to_le_bytes());
         assert_eq!(one(&b), "Linux-x86_64");
+        b[64 + 8..64 + 16].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert_eq!(one(&b), "Linux-x86_64");
+        let mut cut = fake_noted_elf(EM_X86_64, 4, &[]);
+        cut.truncate(64 + 4);
+        assert_eq!(one(&cut), "Linux-x86_64");
         b[32..40].copy_from_slice(&u64::MAX.to_le_bytes());
         assert_eq!(one(&b), "Linux-x86_64");
         // OS/ABI 3 is explicitly Linux whatever the notes say.

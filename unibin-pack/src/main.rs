@@ -74,17 +74,24 @@ fn read(path: &str) -> Result<Vec<u8>> {
 }
 
 fn write_executable(path: &str, bytes: &[u8]) -> Result<()> {
-    let fail = |e: std::io::Error| Error::new(format!("cannot write {path}: {e}"));
-    std::fs::write(path, bytes).map_err(fail)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).map_err(fail)?;
-    }
+    std::fs::write(path, bytes)
+        .and_then(|()| set_mode(path))
+        .map_err(|e| Error::new(format!("cannot write {path}: {e}")))
+}
+
+#[cfg(unix)]
+fn set_mode(path: &str) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+}
+
+#[cfg(not(unix))]
+fn set_mode(_: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-fn run(args: Args, out: &mut dyn Write) -> Result<()> {
+/// Pack as `args` say; returns the line to report on stdout.
+fn run(args: Args) -> Result<String> {
     let mut input = Input {
         launcher: read(&args.launcher)?,
         ..Input::default()
@@ -109,17 +116,19 @@ fn run(args: Args, out: &mut dyn Write) -> Result<()> {
         ""
     };
     let (path, size, keys) = (&args.out, bytes.len(), keys.join(", "));
-    writeln!(out, "unibin-pack: wrote {path} ({size} bytes): {keys}{emu}")?;
-    Ok(())
+    Ok(format!(
+        "unibin-pack: wrote {path} ({size} bytes): {keys}{emu}"
+    ))
 }
 
 /// Entry point with injectable I/O; returns the process exit code.
 fn run_main_with(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> u8 {
     let result = match parse_args(args) {
-        Ok(None) => writeln!(out, "{USAGE}").map_err(Error::from),
-        Ok(Some(args)) => run(args, out),
+        Ok(None) => Ok(USAGE.to_owned()),
+        Ok(Some(args)) => run(args),
         Err(e) => Err(e),
-    };
+    }
+    .and_then(|text| writeln!(out, "{text}").map_err(Error::from));
     match result {
         Ok(()) => 0,
         Err(e) => {
@@ -178,7 +187,9 @@ mod tests {
     #[test]
     fn argument_errors() {
         let e = |a: &[&str]| parse_args(strings(a)).unwrap_err().0;
-        assert!(e(&["--slice"]).contains("--slice needs a value"));
+        for flag in ["--launcher", "--slice", "--emu", "-o"] {
+            assert!(e(&[flag]).contains(&format!("{flag} needs a value")));
+        }
         assert!(e(&["--bogus", "x"]).contains("unknown argument \"--bogus\""));
         assert!(e(&["-o", "x"]).contains("--launcher is required"));
         assert!(e(&["--launcher", "x"]).contains("-o is required"));

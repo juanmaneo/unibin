@@ -119,7 +119,8 @@ mod tests {
     fn layout() {
         let p = build(0x600, 123_456, 0x680).unwrap();
         assert_eq!(p.len(), 0x600);
-        assert!(len() < 0x600, "prologue grew to {} bytes", len());
+        let n = len();
+        assert!(n < 0x600, "prologue grew to {n} bytes");
         assert_eq!(&p[..2], b"MZ");
         assert_eq!(p.iter().position(|&b| b == b'\n'), Some(FIRST_NEWLINE));
         assert!(!p[..FIRST_NEWLINE].contains(&0));

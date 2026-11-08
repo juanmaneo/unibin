@@ -415,6 +415,10 @@ fn cli_rejects_bad_input() {
         assert_eq!(o.status.code(), Some(1), "{args:?}");
         String::from_utf8_lossy(&o.stderr).into_owned()
     };
+    assert!(
+        err(&["--launcher", "/nonexistent", "--slice", &linux, "-o", &out])
+            .contains("cannot read /nonexistent")
+    );
     let wrong_os = format!("{linux}=FreeBSD-x86_64");
     assert!(
         err(&["--launcher", &launcher, "--slice", &wrong_os, "-o", &out])

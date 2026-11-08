@@ -27,7 +27,7 @@ binary built by the normal Rust toolchain for its own target.
 | `unibin-core`   | Format library with **zero external dependencies**: stored ZIP writer/reader, manifest, `sh` prologue, PE relocation, slice sniffing, packing, extraction plans |
 | `unibin-pack`   | CLI that writes the polyglot |
 | `unibin-launch` | The Windows launcher stub embedded as the PE image (pure Rust, std only) |
-| `xtask`       | `dev-check` pre-push gate (check, fmt, clippy, build, test, coverage with a 100% line gate), `dist` and `hwkit` |
+| `xtask`       | `dev-check` pre-push gate (check, fmt, clippy, build, test, coverage with a 100% region, function and line gate), `dist` and `hwkit` |
 | `hwprobe` (`hwtest/probe`) | Payload of the [hardware-test kit](hwtest/README.md): reports which slice ran and what it received |
 
 ## File layout
@@ -244,20 +244,28 @@ GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs
 
 `coverage` builds with `-C instrument-coverage` into `target/cov`, merges the
 profiles with rustup's `llvm-tools` (`rustup component add llvm-tools`), and
-fails unless `llvm-cov report` shows **100% line coverage** for every
-`unibin-*/src` file. A successful run ends with:
+fails unless `llvm-cov report` lists every source file of `unibin-*/src`
+and `hwtest/probe/src` at **100% region, function and line coverage**.
+A file missing from the report fails too. A successful run ends with:
 
 ```
-xtask: coverage gate ok (100% lines on unibin-* sources)
+xtask: coverage gate ok (100% regions, functions and lines on every gated file)
 ```
 
-When the gate fails it prints the uncovered lines. Watch for these
-`llvm-cov` quirks:
+When the gate fails it prints the uncovered lines and the lines that hold an
+uncovered region. Watch for these `llvm-cov` quirks:
 
-- A closure that is never called (`.map_err(|_| …)` on a path that never
-  fails) counts as an uncovered line, even when the surrounding line runs.
-- A `?` that rustfmt moves onto its own line is a separate region. Compute
-  the value into a local first.
+- Every `?` is a region of its own, and so is every closure. A `?` that
+  never fails, or a closure that is never called (`.map_err(|_| …)` on a
+  path that never fails), is a missed region even on a line that ran. Test
+  the failure, or, where it cannot happen, say why and use `unwrap_or` /
+  `unwrap_or_default`.
+- Expressions in `assert!`/`format!` arguments run only on the failure path.
+  Compute them into a local and use inline `{name}` captures.
+- A function compiled into several binaries (unit tests, the shipped bin
+  driven by integration tests) is reported from one copy, not the union of
+  all copies. Cover each path within one binary.
+  `llvm-cov report -show-functions <file>` shows every copy.
 - `if let` without `else` can leave an uncovered closing brace. Move the body
   into a helper function.
 

@@ -51,14 +51,19 @@ pub fn crc32(data: &[u8]) -> u32 {
     })
 }
 
-/// Convert to a 32-bit ZIP field, refusing values that would need ZIP64.
-pub fn fit32(v: u64, what: &str) -> Result<u32> {
-    match u32::try_from(v) {
-        Ok(x) if x != u32::MAX => Ok(x),
-        _ => Err(Error::new(format!(
-            "{what} ({v}) needs ZIP64, which is not supported"
-        ))),
+/// Largest value a 32-bit ZIP field can hold: `u32::MAX` is the ZIP64 marker.
+pub const ZIP32_MAX: u64 = u32::MAX as u64 - 1;
+
+/// Convert to a 32-bit ZIP field, refusing values above `limit` (itself
+/// capped at [`ZIP32_MAX`]: larger values would need ZIP64).
+pub fn fit32(v: u64, limit: u64, what: &str) -> Result<u32> {
+    let max = limit.min(ZIP32_MAX);
+    if v > max {
+        return Err(Error::new(format!(
+            "{what} ({v}) exceeds {max}; ZIP64 is not supported"
+        )));
     }
+    Ok(v as u32)
 }
 
 /// Convert to a 16-bit ZIP field, refusing the ZIP64 marker value.
@@ -87,22 +92,30 @@ pub struct CdEntry {
 pub struct ZipWriter {
     out: Vec<u8>,
     entries: Vec<CdEntry>,
+    limit: u64,
 }
 
 impl ZipWriter {
     /// `prefix` is everything that precedes the first local header.
     pub fn new(prefix: Vec<u8>) -> Self {
+        Self::with_limit(prefix, ZIP32_MAX)
+    }
+
+    /// Like [`ZipWriter::new`], but every offset and size written must stay
+    /// at or below `limit` (which is capped at [`ZIP32_MAX`]).
+    pub fn with_limit(prefix: Vec<u8>, limit: u64) -> Self {
         ZipWriter {
             out: prefix,
             entries: Vec::new(),
+            limit,
         }
     }
 
     /// Store `data` under `name`; returns the absolute span of the bytes.
     pub fn add(&mut self, name: &str, data: &[u8]) -> Result<Span> {
         let header = self.out.len() as u64;
-        fit32(header, "local header offset")?;
-        let size = fit32(data.len() as u64, "entry size")?;
+        fit32(header, self.limit, "local header offset")?;
+        let size = fit32(data.len() as u64, self.limit, "entry size")?;
         let name_len = fit16(name.len(), "entry name length")?;
         let crc = crc32(data);
         let o = &mut self.out;
@@ -142,7 +155,8 @@ impl ZipWriter {
     pub fn finish(mut self, comment: &[u8]) -> Result<Vec<u8>> {
         let count = fit16(self.entries.len(), "entry count")?;
         let comment_len = fit16(comment.len(), "EOCD comment length")?;
-        let cd_offset = fit32(self.out.len() as u64, "central directory offset")?;
+        let limit = self.limit;
+        let cd_offset = fit32(self.out.len() as u64, limit, "central directory offset")?;
         let o = &mut self.out;
         for e in &self.entries {
             o.extend_from_slice(&CD_SIG.to_le_bytes());
@@ -162,8 +176,8 @@ impl ZipWriter {
             o.extend_from_slice(e.name.as_bytes());
         }
         let cd_len = o.len() as u64 - u64::from(cd_offset);
-        let cd_size = fit32(cd_len, "central directory size")?;
-        fit32(o.len() as u64, "EOCD offset")?;
+        let cd_size = fit32(cd_len, limit, "central directory size")?;
+        fit32(o.len() as u64, limit, "EOCD offset")?;
         o.extend_from_slice(&EOCD_SIG.to_le_bytes());
         o.extend_from_slice(&[0; 4]); // this disk, CD disk
         o.extend_from_slice(&count.to_le_bytes());
@@ -234,12 +248,13 @@ fn cd_record(data: &[u8], at: usize, cd_end: usize, limit: u64) -> Option<(CdEnt
     let method = le16(rec, 10)?;
     let crc = le32(rec, 16)?;
     let csize = le32(rec, 20)?;
+    let size = le32(rec, 24)?;
     let name_len = usize::from(le16(rec, 28)?);
     let skip = usize::from(le16(rec, 30)?) + usize::from(le16(rec, 32)?);
     let header = le32(rec, 42)? as usize;
     let name = std::str::from_utf8(rec.get(CD_LEN..CD_LEN + name_len)?).ok()?;
     let local = data.get(header..)?;
-    if le32(local, 0)? != LOCAL_SIG || csize != le32(rec, 24)? {
+    if le32(local, 0)? != LOCAL_SIG || csize != size {
         return None;
     }
     let off = header + LOCAL_LEN + usize::from(le16(local, 26)?) + usize::from(le16(local, 28)?);
@@ -285,7 +300,7 @@ pub fn read_central_directory(data: &[u8], eocd: &Eocd) -> Result<Vec<CdEntry>> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::put32;
+    use crate::{put16, put32};
 
     fn sample() -> Vec<u8> {
         let mut w = ZipWriter::new(b"PREFIX".to_vec());
@@ -442,21 +457,82 @@ mod tests {
     }
 
     #[test]
+    fn central_directory_truncated_inside_a_record() {
+        // A cd_size ending inside each field of the only record.
+        for size in [2u32, 14, 22, 26, 29, 31, 33, 45] {
+            let z = sample();
+            let mut eocd = find_eocd(&z).unwrap();
+            eocd.entries = 1;
+            eocd.cd_size = size;
+            let e = read_central_directory(&z, &eocd).unwrap_err();
+            assert!(e.0.contains("corrupt"), "size {size}: {e}");
+        }
+        // The first record's extra field skips past the end of the directory.
+        assert!(cd_err(|z, e| put16(z, e.cd_offset as usize + 30, 0xFFFF)).contains("entry 1"));
+    }
+
+    #[test]
+    fn local_header_truncated_at_eof() {
+        // A local signature so close to EOF that its name or extra length
+        // field is cut off. The EOCD was parsed before the damage.
+        for back in [4usize, 28] {
+            let e = cd_err(|z, e| {
+                let at = z.len() - back;
+                put32(z, at, LOCAL_SIG);
+                put32(z, e.cd_offset as usize + 42, at as u32);
+            });
+            assert!(e.contains("corrupt"), "{back}: {e}");
+        }
+    }
+
+    #[test]
     fn writer_limits() {
-        assert_eq!(fit32(5, "x"), Ok(5));
+        assert_eq!(fit32(5, ZIP32_MAX, "x"), Ok(5));
         assert!(
-            fit32(u64::from(u32::MAX), "x")
+            fit32(u64::from(u32::MAX), u64::MAX, "x")
                 .unwrap_err()
                 .0
                 .contains("ZIP64")
         );
-        assert!(fit32(1 << 40, "x").is_err());
+        assert!(fit32(1 << 40, ZIP32_MAX, "x").is_err());
+        assert!(fit32(11, 10, "x").is_err());
         assert_eq!(fit16(5, "x"), Ok(5));
         assert!(fit16(0xFFFF, "x").is_err());
         let mut w = ZipWriter::new(Vec::new());
         assert!(w.add(&"n".repeat(0x1_0000), b"").is_err());
         let w = ZipWriter::new(Vec::new());
         assert!(w.finish(&vec![b' '; MAX_COMMENT + 1]).is_err());
+    }
+
+    fn limit_err(r: Result<impl std::fmt::Debug>) -> String {
+        r.unwrap_err().0
+    }
+
+    #[test]
+    fn writer_limit_on_every_field() {
+        let add = |prefix: usize, data: usize| {
+            ZipWriter::with_limit(vec![0; prefix], 10).add("a", &vec![0; data])
+        };
+        assert!(limit_err(add(11, 0)).contains("local header offset"));
+        assert!(limit_err(add(0, 11)).contains("entry size"));
+
+        let mut w = ZipWriter::new(Vec::new());
+        for _ in 0..0xFFFF {
+            w.add("", b"").unwrap();
+        }
+        assert!(limit_err(w.finish(b"")).contains("entry count"));
+
+        // One entry: 30-byte local header + name + data, then 46 + name of
+        // central directory, then the EOCD.
+        let finish = |limit: u64, name: usize, data: usize| {
+            let mut w = ZipWriter::with_limit(Vec::new(), limit);
+            w.add(&"n".repeat(name), &vec![0; data]).unwrap();
+            w.finish(b"")
+        };
+        assert!(limit_err(finish(40, 1, 10)).contains("central directory offset"));
+        assert!(limit_err(finish(100, 60, 0)).contains("central directory size"));
+        assert!(limit_err(finish(100, 20, 0)).contains("EOCD offset"));
+        assert!(finish(200, 20, 0).is_ok());
     }
 
     #[test]

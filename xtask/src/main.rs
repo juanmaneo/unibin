@@ -5,8 +5,9 @@
 //!
 //! `coverage` (alias `cov`) builds the workspace with `-C instrument-coverage`, runs every test
 //! (including the binaries spawned by integration tests), merges the
-//! profiles with rustup's `llvm-tools` and fails unless every `unibin-*/src`
-//! file reaches 100% line coverage.
+//! profiles with rustup's `llvm-tools` and fails unless every gated source
+//! file (`unibin-*/src` and `hwtest/probe/src`) reaches 100% region,
+//! function and line coverage.
 //!
 //! `dist` cross-builds one binary package for every slice target with
 //! cargo-zigbuild / cargo-xwin and packs the slices into a single polyglot
@@ -27,7 +28,7 @@ const TASKS: &str = "usage: cargo xtask <check|fmt|clippy|build|test|coverage|de
        cargo xtask hwkit [--emu <x86_64-emulator>] [-o <dir>]
 
   dev-check   pre-push gate: check, fmt, clippy, build, test, coverage (alias: all)
-  coverage    100% line-coverage gate on unibin-* sources (alias: cov)
+  coverage    100% region/function/line coverage gate (alias: cov)
   dist        cross-build every slice target and pack a release polyglot
   hwkit       build the hardware-test kit (default dir: target/hwkit)";
 
@@ -385,7 +386,15 @@ fn executables(json: &str) -> Vec<String> {
         .collect()
 }
 
-/// Source files under `unibin-*/src` that contain code.
+/// Crates outside `unibin-*` whose sources are gated too. xtask is not: it
+/// drives cargo and the cross toolchains, so tests cannot reach most of it.
+const GATED_EXTRA: &[&str] = &["hwtest/probe"];
+
+/// The `%` columns of `llvm-cov report`, in order. Branch coverage reads `-`
+/// (branch instrumentation is off), so it is not among them.
+const GATED_METRICS: [&str; 3] = ["regions", "functions", "lines"];
+
+/// Source files of every gated crate that contain code.
 fn sources(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
     let mut stack: Vec<PathBuf> = fs::read_dir(root)
@@ -399,6 +408,7 @@ fn sources(root: &Path) -> Vec<String> {
         })
         .map(|p| p.join("src"))
         .collect();
+    stack.extend(GATED_EXTRA.iter().map(|c| root.join(c).join("src")));
     while let Some(dir) = stack.pop() {
         for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
             let path = entry.path();
@@ -416,26 +426,36 @@ fn sources(root: &Path) -> Vec<String> {
     files
 }
 
-/// Lines with a zero execution count in `llvm-cov show -show-line-counts` output.
-fn zero_count_lines(show: &str) -> Vec<String> {
+/// Source lines that never ran, or that hold a region that never ran (a
+/// `^0` marker line under them), in `llvm-cov show
+/// -show-line-counts-or-regions` output.
+fn uncovered(show: &str) -> Vec<String> {
     let mut file = "";
+    let mut last = None;
     let mut out = Vec::new();
     for line in show.lines() {
         if !line.starts_with(' ') && line.ends_with(".rs:") {
             file = line.trim_end_matches(':');
         }
         let mut cols = line.splitn(3, '|');
-        if let (Some(n), Some(count), Some(src)) = (cols.next(), cols.next(), cols.next())
-            && count.trim() == "0"
-        {
-            out.push(format!("{file}:{}: {}", n.trim(), src.trim()));
+        match (cols.next(), cols.next(), cols.next()) {
+            (Some(n), Some(count), Some(src)) => {
+                let at = format!("{file}:{}: {}", n.trim(), src.trim());
+                if count.trim() == "0" {
+                    out.push(at);
+                } else {
+                    last = Some(at);
+                }
+            }
+            _ if line.contains("^0") => out.extend(last.take().map(|at| at + "  [region]")),
+            _ => {}
         }
     }
     out
 }
 
-/// Check the `llvm-cov report` table: the third `%` column is line coverage.
-/// Returns the files that fail, with reasons.
+/// Check the `llvm-cov report` table: every gated file must be listed and
+/// reach 100% in each of [`GATED_METRICS`]. Returns the failures, with reasons.
 fn coverage_gate(report: &str, expected: &[String]) -> Vec<(String, String)> {
     let mut problems = Vec::new();
     let mut seen = Vec::new();
@@ -449,9 +469,16 @@ fn coverage_gate(report: &str, expected: &[String]) -> Vec<(String, String)> {
             continue;
         };
         seen.push(file.clone());
-        let lines = cols.filter(|c| c.ends_with('%')).nth(2).unwrap_or("?");
-        if lines != "100.00%" {
-            problems.push((file.clone(), format!("{lines} lines")));
+        let percents: Vec<&str> = cols.filter(|c| c.ends_with('%')).collect();
+        let short: Vec<String> = GATED_METRICS
+            .iter()
+            .enumerate()
+            .map(|(i, metric)| (percents.get(i).copied().unwrap_or("?"), metric))
+            .filter(|(p, _)| *p != "100.00%")
+            .map(|(p, metric)| format!("{p} {metric}"))
+            .collect();
+        if !short.is_empty() {
+            problems.push((file.clone(), short.join(", ")));
         }
     }
     for file in expected.iter().filter(|f| !seen.contains(f)) {
@@ -512,21 +539,26 @@ fn coverage() -> Result {
     print!("{table}");
     let problems = coverage_gate(&table, &sources(&root));
     if problems.is_empty() {
-        eprintln!("xtask: coverage gate ok (100% lines on unibin-* sources)");
+        eprintln!(
+            "xtask: coverage gate ok (100% regions, functions and lines on every gated file)"
+        );
         return Ok(());
     }
     let mut show = llvm_cov("show");
-    show.args(["-show-line-counts", "-show-instantiations=false"])
+    show.args(["-show-line-counts-or-regions", "-show-instantiations=false"])
         .args(problems.iter().map(|(file, _)| file));
-    let uncovered = zero_count_lines(&output(show).unwrap_or_default());
+    let uncovered = uncovered(&output(show).unwrap_or_default());
     let summary: Vec<String> = problems
         .iter()
         .map(|(f, why)| format!("{f}: {why}"))
         .collect();
     Err(format!(
-        "coverage gate failed:\n  {}\nuncovered lines:\n  {}\n\
-         (a never-called closure counts as a missed line even when it shares a line with\n\
-         executed code; `llvm-cov report -show-functions <file>` lists them)",
+        "coverage gate failed:\n  {}\nuncovered lines and regions:\n  {}\n\
+         (a never-called closure or a `?` that never fails is a missed region even on a\n\
+         line that ran. A function built into several binaries, such as the unit tests\n\
+         and the shipped bin, is reported from one copy, not their union, so its misses\n\
+         may not be listed above; `llvm-cov report -show-functions <file>` shows every\n\
+         copy)",
         summary.join("\n  "),
         uncovered.join("\n  ")
     ))
@@ -568,6 +600,79 @@ mod tests {
                 .unwrap_err()
                 .contains("unknown argument")
         );
+    }
+
+    const REPORT: &str = "\
+Filename          Regions    Missed Regions     Cover   Functions  Missed Functions  Executed       Lines      Missed Lines     Cover    Branches   Missed Branches     Cover
+------------------------------------------------------------------------------------------------
+/w/unibin-core/src/a.rs   10   0   100.00%   2   0   100.00%   8   0   100.00%   0   0   -
+/w/unibin-core/src/b.rs   10   1    90.00%   2   0   100.00%   8   0   100.00%   0   0   -
+/w/hwtest/probe/src/main.rs  10  0  100.00%   2   1    50.00%   8   1    87.50%   0   0   -
+TOTAL                     30   1    96.67%   6   1    83.33%  24   1    95.83%   0   0   -
+";
+
+    #[test]
+    fn gate_checks_regions_functions_and_lines_of_every_file() {
+        let files = |f: &[&str]| f.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let expected = files(&[
+            "unibin-core/src/a.rs",
+            "unibin-core/src/b.rs",
+            "hwtest/probe/src/main.rs",
+            "unibin-pack/src/main.rs",
+        ]);
+        assert_eq!(
+            coverage_gate(REPORT, &expected),
+            [
+                (expected[1].clone(), "90.00% regions".to_owned()),
+                (
+                    expected[2].clone(),
+                    "50.00% functions, 87.50% lines".to_owned()
+                ),
+                (
+                    expected[3].clone(),
+                    "missing from coverage report".to_owned()
+                ),
+            ]
+        );
+        assert!(coverage_gate(REPORT, &expected[..1]).is_empty());
+        // A row without the percentage columns fails rather than passing.
+        let e = coverage_gate("/w/unibin-core/src/a.rs 10 0", &expected[..1]);
+        assert_eq!(e[0].1, "? regions, ? functions, ? lines");
+    }
+
+    #[test]
+    fn uncovered_lines_and_regions() {
+        let show = "\
+/w/unibin-core/src/a.rs:
+    1|      2|fn f() -> Option<u8> {
+    2|      2|    let x = g()?;
+                             ^0
+    3|      0|    dead();
+    4|      2|    h(x)?
+                    ^2
+    5|       |}
+";
+        assert_eq!(
+            uncovered(show),
+            [
+                "/w/unibin-core/src/a.rs:2: let x = g()?;  [region]",
+                "/w/unibin-core/src/a.rs:3: dead();",
+            ]
+        );
+    }
+
+    #[test]
+    fn gated_sources_include_the_probe() {
+        let files = sources(&root());
+        assert!(
+            files.contains(&"unibin-core/src/lib.rs".to_owned()),
+            "{files:?}"
+        );
+        assert!(
+            files.contains(&"hwtest/probe/src/main.rs".to_owned()),
+            "{files:?}"
+        );
+        assert!(!files.iter().any(|f| f.starts_with("xtask/")), "{files:?}");
     }
 
     #[test]

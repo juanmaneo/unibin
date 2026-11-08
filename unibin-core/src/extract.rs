@@ -110,8 +110,10 @@ impl<'a> Archive<'a> {
         let data = &data[..pe::logical_end(data)];
         let eocd = zip::find_eocd(data)?;
         let entries = zip::read_central_directory(data, &eocd)?;
-        let text = std::str::from_utf8(eocd.comment.slice(data)?)
-            .map_err(|_| Error::new("unibin manifest is not UTF-8"))?;
+        // `find_eocd` only accepts a comment that ends exactly at EOF.
+        let comment = data.get(eocd.comment.off as usize..).unwrap_or_default();
+        let text =
+            std::str::from_utf8(comment).map_err(|_| Error::new("unibin manifest is not UTF-8"))?;
         let manifest = Manifest::parse(text)?;
         Ok(Archive {
             data,
@@ -129,7 +131,8 @@ impl<'a> Archive<'a> {
             .ok_or_else(|| {
                 Error::new(format!("span {},{} has no ZIP entry", span.off, span.len))
             })?;
-        let bytes = span.slice(self.data)?;
+        // `read_central_directory` checked every entry lies before the EOCD.
+        let bytes = span.slice(self.data).unwrap_or_default();
         if zip::crc32(bytes) != entry.crc {
             return Err(Error::new(format!(
                 "ZIP entry {:?} fails its CRC check",
@@ -143,18 +146,20 @@ impl<'a> Archive<'a> {
     /// `[program]` or `[emulator, program]`. `name` becomes the program's
     /// file name so multi-call binaries still see a meaningful `argv[0]`.
     pub fn materialize(&self, plan: &Plan, dir: &Path, name: &str) -> Result<Vec<PathBuf>> {
-        match plan {
-            Plan::Native { slice, .. } => {
-                Ok(vec![write_exec(dir.join(name), self.payload(*slice)?)?])
-            }
-            Plan::Emulated { slice, emu, .. } => {
-                let emu = write_exec(dir.join(".emu"), self.payload(*emu)?)?;
-                Ok(vec![
-                    emu,
-                    write_exec(dir.join(name), self.payload(*slice)?)?,
-                ])
-            }
+        let (slice, emu) = match plan {
+            Plan::Native { slice, .. } => (slice, None),
+            Plan::Emulated { slice, emu, .. } => (slice, Some(emu)),
+        };
+        let mut argv = Vec::new();
+        if let Some(emu) = emu {
+            argv.push(self.extract(*emu, dir.join(".emu"))?);
         }
+        argv.push(self.extract(*slice, dir.join(name))?);
+        Ok(argv)
+    }
+
+    fn extract(&self, span: Span, path: PathBuf) -> Result<PathBuf> {
+        write_exec(path, self.payload(span)?)
     }
 }
 
@@ -164,10 +169,9 @@ fn write_exec(path: PathBuf, bytes: &[u8]) -> Result<PathBuf> {
     opts.write(true).create_new(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o700);
-    let mut f = opts
-        .open(&path)
+    opts.open(&path)
+        .and_then(|mut f| f.write_all(bytes))
         .map_err(|e| Error::new(format!("cannot create {}: {e}", path.display())))?;
-    f.write_all(bytes)?;
     Ok(path)
 }
 
@@ -262,6 +266,8 @@ mod tests {
         assert!(plan(&manifest(&["Linux-x86_64"], false), "Linux-aarch64").is_err());
         assert!(plan(&manifest(&["Darwin-x86_64"], true), "Linux-aarch64").is_err());
         assert!(plan(&manifest(&["Linux-x86_64"], true), "FreeBSD-x86_64").is_err());
+        // A translating host, but no slice its translator runs.
+        assert!(plan(&manifest(&["Linux-x86_64"], true), "Windows-aarch64").is_err());
     }
 
     fn archive_bytes(comment: &str) -> Vec<u8> {
@@ -345,6 +351,17 @@ mod tests {
         let argv = a.materialize(&emulated, &dir, "prog2").unwrap();
         assert_eq!(argv, [dir.join(".emu"), dir.join("prog2")]);
         assert_eq!(fs::read(&argv[0]).unwrap(), b"EMU");
+        // The emulator is never overwritten either.
+        let e = a.materialize(&emulated, &dir, "prog3").unwrap_err();
+        assert!(e.0.contains(".emu"), "{e}");
+
+        // A damaged slice is refused before anything is written.
+        let mut bad = z.clone();
+        bad[50] ^= 1;
+        let a = Archive::open(&bad).unwrap();
+        let e = a.materialize(&native, &dir, "prog4").unwrap_err();
+        assert!(e.0.contains("CRC"), "{e}");
+        assert!(!dir.join("prog4").exists());
 
         let other = temp_dir(&base).unwrap();
         assert_ne!(other, dir);

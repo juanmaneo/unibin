@@ -239,6 +239,16 @@ mod tests {
                 .contains("end-of-central-directory")
         );
 
+        // Slice damaged after packing: its CRC no longer matches. The slice
+        // follows a 22-byte prefix, a 30-byte local header and its name.
+        let exe = f.packed("crc", "#!/bin/sh\nexit 0\n", None);
+        let mut bytes = fs::read(&exe).unwrap();
+        bytes[22 + 30 + "Linux-x86_64".len()] ^= 1;
+        fs::write(&exe, bytes).unwrap();
+        let (code, err) = f.run(&exe, &[], "Linux-x86_64");
+        assert_eq!(code, LAUNCH_FAILED);
+        assert!(err.contains("CRC"), "{err}");
+
         // Slice that is not executable by the OS.
         let exe = f.packed("junk", "\0\0\0\0 not a program", None);
         let (code, err) = f.run(&exe, &[], "Linux-x86_64");

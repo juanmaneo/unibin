@@ -35,8 +35,7 @@ pub fn nt_headers(data: &[u8]) -> Option<(usize, u16)> {
         return None;
     }
     let lfanew = le32(data, E_LFANEW)? as usize;
-    let sig = data.get(lfanew..lfanew.checked_add(4)?)?;
-    (sig == b"PE\0\0").then_some(())?;
+    data.get(lfanew..)?.starts_with(b"PE\0\0").then_some(())?;
     Some((lfanew, le16(data, lfanew + 4)?))
 }
 
@@ -93,14 +92,15 @@ pub fn logical_end(data: &[u8]) -> usize {
     }
 }
 
-/// Map an RVA to a file offset using the section table.
+/// Map an RVA to a file offset using the section table, which `headers`
+/// has already checked lies inside `data`.
 fn rva_to_offset(data: &[u8], h: &Headers, rva: u32) -> Option<usize> {
     (0..h.nsections).find_map(|i| {
-        let s = h.sections + i * SECTION_LEN;
-        let va = le32(data, s + 12)?;
-        let raw_size = le32(data, s + 16)?;
-        let raw_ptr = le32(data, s + 20)?;
-        (rva >= va && rva - va < raw_size).then(|| (raw_ptr + (rva - va)) as usize)
+        let field = |at| le32(data, h.sections + i * SECTION_LEN + at).unwrap_or(0);
+        let (va, raw_size, raw_ptr) = (field(12), field(16), field(20));
+        rva.checked_sub(va)
+            .filter(|&d| d < raw_size)
+            .map(|d| raw_ptr as usize + d as usize)
     })
 }
 
@@ -265,6 +265,28 @@ pub(crate) mod tests {
         put16(&mut bad, 0x98, 0x10B); // PE32
         assert!(machine(&bad).unwrap_err().0.contains("PE32+"));
         assert!(machine(&pe[..0x100]).unwrap_err().0.contains("truncated"));
+        // Image ends right after the PE signature.
+        let mut cut = b"MZ".to_vec();
+        cut.resize(0x40, b' ');
+        put32(&mut cut, E_LFANEW, 0x40);
+        cut.extend_from_slice(b"PE\0\0");
+        assert_eq!(nt_headers(&cut), None);
+    }
+
+    #[test]
+    fn data_directories_cut_off_by_eof() {
+        // An optional header holding only its magic, no sections, and the
+        // file ending before, inside, or after the directory count and the
+        // security directory.
+        let mut pe = fake_pe(MACHINE_AMD64);
+        put16(&mut pe, 0x86, 0);
+        put16(&mut pe, 0x94, 2);
+        let opt = 0x98;
+        put32(&mut pe, opt + 112 + DIR_SECURITY * 8, 1);
+        put32(&mut pe, opt + 112 + DIR_SECURITY * 8 + 4, 1);
+        for end in [opt + 2, opt + 112, opt + 148] {
+            assert_eq!(logical_end(&pe[..end]), end);
+        }
     }
 
     #[test]
