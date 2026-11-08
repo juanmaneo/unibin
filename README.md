@@ -1,3 +1,5 @@
+[![CI](https://github.com/your-username/unibin/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/unibin/actions/workflows/ci.yml)
+
 # Unibin - One executable file for Linux, FreeBSD, macOS and Windows
 
 `unibin-pack` combines native executables ("slices") into **one file**. That
