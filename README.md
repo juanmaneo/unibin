@@ -1,4 +1,4 @@
-[![CI](https://github.com/your-username/unibin/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/unibin/actions/workflows/ci.yml) [![License: ISC](https://img.shields.io/badge/license-ISC-blue.svg)](LICENSE)
+[![CI](https://github.com/juanmaneo/unibin/actions/workflows/ci.yml/badge.svg)](https://github.com/juanmaneo/unibin/actions/workflows/ci.yml) [![License: ISC](https://img.shields.io/badge/license-ISC-blue.svg)](LICENSE)
 
 # Unibin - One executable file for Linux, FreeBSD, macOS and Windows
 
