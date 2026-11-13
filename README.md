@@ -241,6 +241,10 @@ first failure. `fmt` only checks formatting, and clippy runs with
 
 GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs
 `cargo xtask dev-check` on `ubuntu-latest` for every push and pull request.
+A second job on `windows-latest` runs check, fmt, clippy, build and test
+(not the coverage gate, which needs the Unix-only tests), then packs a real
+launcher plus `hwprobe` and runs [`hwtest/run.ps1`](hwtest/README.md) on it,
+including the Authenticode check.
 
 `coverage` builds with `-C instrument-coverage` into `target/cov`, merges the
 profiles with rustup's `llvm-tools` (`rustup component add llvm-tools`), and

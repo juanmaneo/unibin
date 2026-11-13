@@ -39,3 +39,51 @@ jobs:
 
       - name: cargo xtask dev-check
         run: cargo xtask dev-check
+
+  # The coverage gate is Linux-only: the shell prologue and Unix launcher
+  # tests do not run here. Instead, the packed launcher is run for real.
+  windows:
+    name: windows (check, fmt, clippy, build, test, hwtest)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust (stable + clippy, rustfmt)
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+          rustc -vV
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo xtask check
+      - run: cargo xtask fmt
+      - run: cargo xtask clippy
+      - run: cargo xtask build
+      - run: cargo xtask test
+
+      # Pack hwprobe with the real launcher into a one-slice kit, the same
+      # shape `cargo xtask hwkit` builds, and run hwtest/run.ps1 on it.
+      - name: Pack the hardware-test kit
+        shell: bash
+        run: |
+          cargo build --release -p unibin-launch -p unibin-pack -p hwprobe
+          mkdir -p target/kit
+          target/release/unibin-pack.exe \
+            --launcher target/release/unibin-launch.exe \
+            --slice target/release/hwprobe.exe \
+            -o target/kit/probe.com
+          cp target/kit/probe.com target/kit/probe-x86_64.com
+          cp hwtest/run.ps1 target/kit/run.ps1
+
+      - name: Run hwtest/run.ps1
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File target/kit/run.ps1
+
+      - name: Upload the hwtest report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: hwtest-windows
+          path: target/kit/hwtest-*.txt
+          if-no-files-found: ignore
