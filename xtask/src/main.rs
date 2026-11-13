@@ -572,6 +572,11 @@ mod tests {
         a.iter().map(|s| s.to_string()).collect()
     }
 
+    /// `/x/y` is only absolute on Unix; Windows adds the current drive.
+    fn abs(p: &str) -> PathBuf {
+        std::path::absolute(p).unwrap()
+    }
+
     #[test]
     fn dist_arguments() {
         let d = parse_dist(&[]).unwrap();
@@ -581,8 +586,8 @@ mod tests {
         );
         let d = parse_dist(&args(&["-p", "app", "--emu", "/x/fex", "-o", "/y/app"])).unwrap();
         assert_eq!(d.package, "app");
-        assert_eq!(d.emu.as_deref(), Some(Path::new("/x/fex")));
-        assert_eq!(d.out.as_deref(), Some(Path::new("/y/app")));
+        assert_eq!(d.emu, Some(abs("/x/fex")));
+        assert_eq!(d.out, Some(abs("/y/app")));
         assert!(
             parse_dist(&args(&["-o", "rel"]))
                 .unwrap()
@@ -678,8 +683,8 @@ TOTAL                     30   1    96.67%   6   1    83.33%  24   1    95.83%  
     #[test]
     fn hwkit_arguments() {
         let d = parse_hwkit(&args(&["--emu", "/x/qemu", "-o", "/kit"])).unwrap();
-        assert_eq!(d.emu.as_deref(), Some(Path::new("/x/qemu")));
-        assert_eq!(d.out.as_deref(), Some(Path::new("/kit")));
+        assert_eq!(d.emu, Some(abs("/x/qemu")));
+        assert_eq!(d.out, Some(abs("/kit")));
         assert!(
             parse_hwkit(&args(&["-p", "x"]))
                 .unwrap_err()
